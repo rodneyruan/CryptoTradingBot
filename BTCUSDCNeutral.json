@@ -1,0 +1,17 @@
+{
+    "CurrentSymbol": "BTCUSDC",
+    "QtyPerOrder": 0.003,
+    "ProfitRate": 0.005,
+    "PRICE_PRECISION": 1,
+    "QTY_PRECISION": 3,
+    "NumberOfInitialBuyGrids": 4,
+    "NumberOfInitialSellGrids": 4,
+    "NumberOfTrailingDownGrids": 10,
+    "NumberOfTrailingUpGrids": 10,
+    "TrailDown_start_grids": 4,
+    "TrailUp_start_grids": 4,
+    "BuyingDipStartDropPercent": 0.07,
+    "BuyingDipGridDepthPercent": 0.03,
+    "NumberOfBuyingDipGrids": 0,
+    "BuyingDipQtyPerOrder": 0
+}
