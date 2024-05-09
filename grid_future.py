@@ -16,7 +16,7 @@ from key_config import apisecret
 #  -0.5% *6 = -3%, +0.5%*4 = +2%, range and trigger trail up/down
 #  -0.5% *16 = -8% +0.5%*4 = +7%
 #  start from -7%, -10%, -13% 0.002 BTC,~ 120U/grid, 2 grids, totally around 240 U
-CurrentSymbol='BTCFDUSD'
+CurrentSymbol='BTCUSDC'
 PRICE_PRECISION = 2
 QTY_PRECISION = 4
 
@@ -39,10 +39,10 @@ BuyingDipQtyPerOrder  = 0.002
 MARKET_SELL_ADDITIONAL_RATE=1.0003
 MARKET_BUY_ADDITIONAL_RATE= 0.9997
 
-FIRST_INITIAL_BUY_PERCENTAGE=1.0
+FIRST_INITIAL_BUY_PERCENTAGE=0.6
 SECOND_INITIAL_BUY_PRICE_RATE=0.995
 
-FIRST_INITIAL_SELL_PERCENTAGE=1.0
+FIRST_INITIAL_SELL_PERCENTAGE=0.6
 SECOND_INITIAL_SELL_PRICE_RATE=1.005
 
 
@@ -54,11 +54,14 @@ def read_config_file(file_path):
         config = json.load(file)
     return config
 
-config_file = "BTCFDUSD_spot.json"
+config_file = "BTCUSDCNeutral.json"
+Direction="Neutral"
 
-if len(sys.argv) > 1:
-    config_file = sys.argv[1]+"_spot.json"
+if len(sys.argv) > 2:
+    CurrentSymbol =  sys.argv[1]
+    Direction = sys.argv[2]
 
+config_file = CurrentSymbol+Direction+".json"
 
 config = read_config_file(config_file)
 
@@ -79,10 +82,11 @@ NumberOfBuyingDipGrids = config["NumberOfBuyingDipGrids"]
 BuyingDipQtyPerOrder = config["BuyingDipQtyPerOrder"]
 
 
+
 NumberOfTotalGrids = NumberOfInitialBuyGrids  + NumberOfInitialSellGrids +NumberOfTrailingUpGrids+NumberOfTrailingDownGrids
 
 
-io_file = CurrentSymbol+"_spot.txt"
+io_file = CurrentSymbol+Direction+".txt"
 
 
 trail_down_trigger_price = 0
@@ -103,10 +107,8 @@ NODE_STATUS_ACTIVE = 1
 
 
 
-
 client = Client(apikey, apisecret)
-
-CurrentPrice = client.get_symbol_ticker(symbol=CurrentSymbol)
+CurrentPrice = client.futures_symbol_ticker(symbol=CurrentSymbol)
 initial_price= round(float(CurrentPrice['price']) ,PRICE_PRECISION )
 
 baseline_price = initial_price
@@ -138,7 +140,6 @@ class Logger(object):
             file.write(message)
 
 
-
 sys.stdout = Logger(io_file)
 print("\n\n %s ======>    Trading bot started @%.4f" %( datetime.now(), initial_price))
 
@@ -149,6 +150,7 @@ class GridTradeNode:
         self.order_status = OrderStatus_NotStarted
         self.order_id = 0
         self.node_status = NODE_STATUS_INACTIVE
+
 
 ## 1 Initializing Nodes
 GridTradeNodeList = []
@@ -163,28 +165,29 @@ for i in range(NumberOfTotalGrids):
 
 
 ### 2 Initial POSITION
-price_to_buy = round(initial_price* MARKET_BUY_ADDITIONAL_RATE, PRICE_PRECISION)
-quantity_to_buy= round(NumberOfInitialSellGrids * QtyPerOrder * FIRST_INITIAL_BUY_PERCENTAGE,QTY_PRECISION)
+
+if( Direction == "Long" ):
+    price_to_buy = round(initial_price* MARKET_BUY_ADDITIONAL_RATE, PRICE_PRECISION)
+    quantity_to_buy= round(NumberOfInitialSellGrids * QtyPerOrder * FIRST_INITIAL_BUY_PERCENTAGE,QTY_PRECISION)
+
+    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_BUY, type='LIMIT', quantity=quantity_to_buy, price=price_to_buy, timeInForce="GTC")
+    order_id = order['orderId']
+
+    for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids+NumberOfInitialSellGrids):
+        GridTradeNodeList[i].order_status = OrderStatus_BuyOrderPlaced
+        GridTradeNodeList[i].node_status = NODE_STATUS_ACTIVE
 
 
-order = client.order_limit_buy(symbol=CurrentSymbol, quantity=quantity_to_buy, price=price_to_buy)
-order_id = order['orderId']
-
-for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids+NumberOfInitialSellGrids):
-    GridTradeNodeList[i].order_status = OrderStatus_BuyOrderPlaced
-    GridTradeNodeList[i].node_status = NODE_STATUS_ACTIVE
-
-
-while (True):
-    time.sleep(30)
-    try:
-        order = client.get_order(symbol=CurrentSymbol,orderId=order_id)
-        if (order['status'] == 'FILLED'):
-            for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids+NumberOfInitialSellGrids):
-                GridTradeNodeList[i].order_status = OrderStatus_BuyOrderFilled
-                SumBuyAmount +=QtyPerOrder
-                SumBuyValue+=QtyPerOrder*price_to_buy
-            print("Initial BUY order filled.    Price=%.2f     amount=%.4f    SumBuyValue=%.4f" %(price_to_buy,quantity_to_buy,SumBuyValue) )
+    while (True):
+        time.sleep(30)
+        try:
+            order = client.futures_get_order(symbol=CurrentSymbol,orderId=order_id)
+            if (order['status'] == 'FILLED'):
+                for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids+NumberOfInitialSellGrids):
+                    GridTradeNodeList[i].order_status = OrderStatus_BuyOrderFilled
+                    SumBuyAmount +=QtyPerOrder
+                    SumBuyValue+=QtyPerOrder*price_to_buy
+                print("First Part initial BUY order filled.    Price=%.2f     amount=%.4f    SumBuyValue=%.4f" %(price_to_buy,quantity_to_buy,SumBuyValue) )
 
             break
         else:
@@ -194,12 +197,60 @@ while (True):
         print(traceback.format_exc())
 
 
+    price_to_buy = round(initial_price*SECOND_INITIAL_BUY_PRICE_RATE,PRICE_PRECISION)
+    quantity_to_buy= round( NumberOfInitialSellGrids * QtyPerOrder*(1-FIRST_INITIAL_BUY_PERCENTAGE) ,QTY_PRECISION)
+
+    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_BUY, type='LIMIT', quantity=quantity_to_buy, price=price_to_buy, timeInForce="GTC")
+    order_id = order['orderId']
+    print("Second part of initial BUY order is placed. quantity = %.4f  price =  %.4f " % (quantity_to_buy, price_to_buy))
+
+
+elif( Direction == "Short" ):
+    price_to_sell = round(initial_price*MARKET_SELL_ADDITIONAL_RATE,PRICE_PRECISION)
+    quantity_to_sell= round( NumberOfInitialBuyGrids * QtyPerOrder*FIRST_INITIAL_SELL_PERCENTAGE ,QTY_PRECISION)
+
+    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL, type='LIMIT', quantity=quantity_to_sell, price=price_to_sell, timeInForce="GTC")
+    order_id = order['orderId']
+
+
+    for i in range(NumberOfTrailingDownGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids):
+        GridTradeNodeList[i].order_status = OrderStatus_SellOrderPlaced
+        GridTradeNodeList[i].node_status = NODE_STATUS_ACTIVE
+
+    while (True):
+        time.sleep(30)
+        try:
+            order = client.futures_get_order(symbol=CurrentSymbol,orderId=order_id)
+            if (order['status'] == 'FILLED'):
+                for i in range(NumberOfTrailingDownGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids):
+                    GridTradeNodeList[i].order_status = OrderStatus_SellOrderFilled
+                    SumSellAmount +=QtyPerOrder
+                    SumSellValue+=QtyPerOrder*price_to_sell
+
+                print("First Part initial SELL order filled, qty=%.4f, price=%.4f, SumSellValue=%.4f" %(quantity_to_sell, price_to_sell, SumSellValue) )
+            break
+        else:
+            print("Order Status is ",order['status'])
+        except:
+            print("Exception!!! Exception occured while getting buy order status")
+            print(traceback.format_exc())
+
+    
+        price_to_sell = round(initial_price*SECOND_INITIAL_SELL_PRICE_RATE,PRICE_PRECISION)
+        quantity_to_sell= round( NumberOfInitialBuyGrids * QtyPerOrder*(1-FIRST_INITIAL_SELL_PERCENTAGE) ,QTY_PRECISION)
+
+        order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL, type='LIMIT', quantity=quantity_to_sell, price=price_to_sell, timeInForce="GTC")
+        order_id = order['orderId']
+        print("Second part of initial SELL order is placed. quantity = %.4f  price =  %.4f " % (quantity_to_sell, price_to_sell))
+
+
 ## 3 Initial Orders
 ### 3.1 Placing Initial BUY Orders
 for i in range(NumberOfTrailingDownGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids):
     GridTradeNodeList[i].node_status = NODE_STATUS_ACTIVE
     price_to_buy= GridTradeNodeList[i].price_buy
-    order = client.order_limit_buy(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_buy)
+    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_BUY, type='LIMIT',
+            quantity=QtyPerOrder, price=price_to_buy, timeInForce="GTC")
     GridTradeNodeList[i].order_id = order['orderId']
     GridTradeNodeList[i].order_status = OrderStatus_BuyOrderPlaced
     time.sleep(1)
@@ -207,9 +258,11 @@ for i in range(NumberOfTrailingDownGrids, NumberOfTrailingDownGrids+NumberOfInit
 ### 3.2 Placing Initial SELL Orders
 for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTrailingDownGrids + NumberOfInitialBuyGrids + NumberOfInitialSellGrids):
     price_to_sell = GridTradeNodeList[i].price_sell
-    order = client.order_limit_sell(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_sell)
+    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL,
+            type='LIMIT', quantity=QtyPerOrder, price=price_to_sell, timeInForce="GTC")
     GridTradeNodeList[i].order_id = order['orderId']
     GridTradeNodeList[i].order_status = OrderStatus_SellOrderPlaced
+    GridTradeNodeList[i].node_status = NODE_STATUS_ACTIVE
     time.sleep(1)
 
 for i in range(NumberOfTotalGrids):
@@ -217,17 +270,6 @@ for i in range(NumberOfTotalGrids):
        ( i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids, GridTradeNodeList[i].node_status,
        GridTradeNodeList[i].price_buy,GridTradeNodeList[i].price_sell, GridTradeNodeList[i].order_id, GridTradeNodeList[i].order_status ))
 
-### 3.3 Placing Initial Buying Dip Orders
-for i in range(NumberOfBuyingDipGrids):
-    price_to_buy = round( initial_price * (1 - BuyingDipStartDropPercent - BuyingDipGridDepthPercent* i),PRICE_PRECISION  )
-    order = client.order_limit_buy(symbol=CurrentSymbol, quantity=BuyingDipQtyPerOrder, price=price_to_buy)
-    percent_rate = ((price_to_buy- initial_price)/initial_price )*100
-    #print("Placing a buying dip order, price_to_buy=%.4f  percent_rate %.2f%% " % ( price_to_buy, percent_rate) )
-
-    time.sleep(1)
-
-
-###
 
 ticks= 0
 matched_number=0
@@ -264,7 +306,7 @@ while (True):
     current_time = datetime.now()
 
     try:
-        CurrentPrice = client.get_symbol_ticker(symbol=CurrentSymbol)
+        CurrentPrice = client.futures_symbol_ticker(symbol=CurrentSymbol)
         current_price = round( float(CurrentPrice['price']),PRICE_PRECISION )
     except:
         print(traceback.format_exc())
@@ -278,7 +320,7 @@ while (True):
         order_id = GridTradeNodeList[i].order_id
         try:
             time.sleep(0.1)
-            order = client.get_order(symbol=CurrentSymbol,orderId=order_id)
+            order = client.futures_get_order(symbol=CurrentSymbol,orderId=order_id)
         except:
             print("%d : exception occured while getting order status, order_id =%d  " % (i,order_id))
             print(traceback.format_exc())
@@ -298,7 +340,8 @@ while (True):
                     GridTradeNodeList[i].price_sell, price_to_buy, matched_number))
 
                 try:
-                    order = client.order_limit_buy(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_buy)
+                    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_BUY, type='LIMIT',
+                                 quantity=QtyPerOrder, price=price_to_buy, timeInForce="GTC")
                     GridTradeNodeList[i].order_id = order['orderId']
                     GridTradeNodeList[i].order_status = OrderStatus_BuyOrderPlaced
                 except:
@@ -319,6 +362,8 @@ while (True):
                 SumBuyAmount+=QtyPerOrder
                 SumBuyValue += QtyPerOrder * GridTradeNodeList[i].price_buy
 
+
+
                 price_to_sell = GridTradeNodeList[i].price_sell
                 if( price_to_sell < current_price):
                     price_to_sell = current_price
@@ -329,7 +374,9 @@ while (True):
                     % (current_time,  i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids , GridTradeNodeList[i].price_buy, price_to_sell))
 
                 try:
-                    order = client.order_limit_sell(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_sell)
+                    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL, type='LIMIT',
+                                 quantity=QtyPerOrder, price=price_to_sell, timeInForce="GTC")
+
                     GridTradeNodeList[i].order_id = order['orderId']
                     GridTradeNodeList[i].order_status = OrderStatus_SellOrderPlaced
                 except:
@@ -364,11 +411,11 @@ while (True):
         if( GridTradeNodeList[highest_index].order_status == OrderStatus_SellOrderPlaced):
             order_id = GridTradeNodeList[highest_index].order_id
             try:
-                order = client.get_order(symbol=CurrentSymbol,orderId=order_id)
+                order = client.futures_get_order(symbol=CurrentSymbol,orderId=order_id)
                 print("Trailing down, highest order status is ", order['status']  )
 
                 if( order['status'] == 'NEW'):
-                    client.cancel_order(symbol=CurrentSymbol, orderId=order_id)
+                    client.futures_cancel_order(symbol=CurrentSymbol, orderId=order_id)
                     need_to_sell_for_trail_down = 1
             except:
                 print(traceback.format_exc())
@@ -383,26 +430,24 @@ while (True):
 
         if( need_to_sell_for_trail_down == 1 ):
             try:
-                price_to_sell = round(current_price * MARKET_SELL_ADDITIONAL_RATE, PRICE_PRECISION)
-                order = client.order_limit_sell(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_sell)
-
+                price_to_sell = round(current_price*MARKET_SELL_ADDITIONAL_RATE, PRICE_PRECISION)
+                order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL, type='LIMIT',
+                          quantity=QtyPerOrder, price = price_to_sell,timeInForce="GTC")
                 order_id = order['orderId']
 
                 while( retry_counter > 0 ):
                     time.sleep(60)
-                    order = client.get_order(symbol=CurrentSymbol,orderId=order_id)
+                    order = client.futures_get_order(symbol=CurrentSymbol,orderId=order_id)
                     if( order['status'] == 'FILLED'):
                         break
                     elif(retry_counter == 1):
-                        #client.order_market_sell(symbol=CurrentSymbol, quantity=QtyPerOrder)
+ 
                         print("%s Trailing down, the LIMIT-SELL order is not executed after 3 minites, price @ %.4f" 
                               %(datetime.now(), price_to_sell))
                     retry_counter -=1
             except:
                 print(traceback.format_exc())
                 print("Trailing down, failed to sell at current price for trailing down ")
-
-
 
         # TODO  check if it is really sold?
 
@@ -426,7 +471,8 @@ while (True):
         price_to_buy = round( GridTradeNodeList[lowest_index-1].price_buy, PRICE_PRECISION)
 
         try:
-            order = client.order_limit_buy(symbol=CurrentSymbol, quantity=QtyPerOrder, price=round(price_to_buy,PRICE_PRECISION))
+            order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_BUY, type='LIMIT',
+                                 quantity=QtyPerOrder, price= price_to_buy, timeInForce="GTC")
             order_id = order['orderId']
             GridTradeNodeList[lowest_index-1].order_id = order_id
             GridTradeNodeList[lowest_index-1].order_status = OrderStatus_BuyOrderPlaced
@@ -450,8 +496,6 @@ while (True):
                    GridTradeNodeList[i].order_status ))
 
 
-
-
     elif ( current_price >  trail_up_trigger_price and n_trail_up_or_down < NumberOfTrailingUpGrids):
         print("------->>> Trailing UP ! current_price is %.4f, trail_up_trigger_price is %.4f " % (current_price, trail_up_trigger_price) )
 
@@ -468,17 +512,17 @@ while (True):
 
         time.sleep(5)
 
-        # 5.1 First Step for trailing UP, is to cancel the lowest BUY Order
+        # First Step for trailing UP, is to cancel the lowest BUY Order
         need_to_buy_for_trail_up = 0
 
         if( GridTradeNodeList[lowest_index].order_status == OrderStatus_BuyOrderPlaced):
             order_id = GridTradeNodeList[lowest_index].order_id
             try:
-                order = client.get_order(symbol=CurrentSymbol,orderId=order_id)
+                order = client.futures_get_order(symbol=CurrentSymbol,orderId=order_id)
                 print("Trailing UP, lowest order status is ", order['status']  )
 
                 if( order['status'] == 'NEW'):
-                    client.cancel_order(symbol=CurrentSymbol, orderId=order_id)
+                    client.futures_cancel_order(symbol=CurrentSymbol, orderId=order_id)
                     need_to_buy_for_trail_up = 1
             except:
                 print(traceback.format_exc())
@@ -486,22 +530,23 @@ while (True):
 
         GridTradeNodeList[lowest_index].node_status = NODE_STATUS_INACTIVE
 
-        time.sleep(15)
+        time.sleep(7)
 
 
-        #5.2 Second step is to BUY QtyPerOrder
+
+        #Second step is to sell QtyPerOrder
         retry_counter = 3
 
         if( need_to_buy_for_trail_up == 1 ):
             try:
                 price_to_buy = round(current_price*MARKET_BUY_ADDITIONAL_RATE, PRICE_PRECISION)
-                order = client.order_limit_buy(symbol=CurrentSymbol, price=price_to_buy, quantity=QtyPerOrder)
-
+                order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_BUY, type='LIMIT',
+                          quantity=QtyPerOrder, price = price_to_buy,timeInForce="GTC")
                 order_id = order['orderId']
 
                 while( retry_counter > 0 ):
                     time.sleep(60)
-                    order = client.get_order(symbol=CurrentSymbol,orderId=order_id)
+                    order = client.futures_get_order(symbol=CurrentSymbol,orderId=order_id)
                     if( order['status'] == 'FILLED'):
                         break
                     elif(retry_counter == 1):
@@ -537,7 +582,8 @@ while (True):
         price_to_sell = round( GridTradeNodeList[highest_index+1].price_sell, PRICE_PRECISION)
 
         try:
-            order=client.order_limit_sell(symbol=CurrentSymbol, quantity=QtyPerOrder, price=round(price_to_sell,PRICE_PRECISION) )
+            order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL, type='LIMIT',
+                                 quantity=QtyPerOrder, price= price_to_sell, timeInForce="GTC")
             order_id = order['orderId']
             GridTradeNodeList[highest_index+1].order_id = order_id
             GridTradeNodeList[highest_index+1].order_status = OrderStatus_SellOrderPlaced
@@ -566,6 +612,9 @@ while (True):
         elif( (NumberOfTrailingDownGrids + n_trail_up_or_down) < 0 ):
             if(ticks %10 == 1):
                 print("We have hit the Trail Down limt.  n_trail_up_or_down is %d" % (n_trail_up_or_down))
+
+
+
 
 
 
