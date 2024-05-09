@@ -5,34 +5,79 @@ from binance.client import Client
 import sys
 import os
 from datetime import datetime
-import importlib
+#import importlib
 import traceback
+import json
+
 from key_config import apikey
 from key_config import apisecret
-#apikey = ''
-#apisecret = ''
+
+# ********** Symbol Specific Setting START >>>>>>>>>>>>
+#  -0.5% *6 = -3%， +0.5%*4 = +2%, range and trigger trail up/down
+#  -0.5% *16 = -8% +0.5%*4 = +7%
+#  start from -7%, -10%, -13% 0.002 BTC,~ 120U/grid, 2 grids, totally around 240 U
+CurrentSymbol='BTCFDUSD'
+PRICE_PRECISION = 2
+QTY_PRECISION = 4
+
+QtyPerOrder  = 0.001
+ProfitRate = 0.01
+
+NumberOfInitialBuyGrids = 6
+NumberOfInitialSellGrids = 4
+NumberOfTrailingDownGrids = 10
+NumberOfTrailingUpGrids = 10
+
+TrailDown_start_grids = 6
+TrailUp_start_grids = 4
+
+BuyingDipStartDropPercent = 0.07
+BuyingDipGridDepthPercent = 0.03
+NumberOfBuyingDipGrids = 2
+BuyingDipQtyPerOrder  = 0.002
+
+MARKET_SELL_ADDITIONAL_RATE=1.0003
+MARKET_BUY_ADDITIONAL_RATE= 0.9997
+
+FIRST_PART_INITIAL_BUY_ORDER_PERCENT=1
+SECOND_PART_INITIAL_BUY_ORDER_PRICE_RATE =0.995
+
+# **********Symbol Specific Setting END <<<<<<<<<<<<<<
+
+def read_config_file(file_path):
+    with open(file_path, 'r') as file:
+        config = json.load(file)
+    return config
+
+config_file = "BTCFDUSD_spot.json"
+
+if len(sys.argv) > 1:
+    config_file = sys.argv[1]+"_spot.json"
 
 
+config = read_config_file(config_file)
 
-if len(sys.argv) < 2:
-    print("Please provide the name of the module as a command-line argument.")
-    module_name = "BTCFDUSD_spot_header"
-else:
-    module_name = sys.argv[1]+"_spot_header"
+CurrentSymbol = config["CurrentSymbol"]
+QtyPerOrder = config["QtyPerOrder"]
+ProfitRate = config["ProfitRate"]
+PRICE_PRECISION = config["PRICE_PRECISION"]
+QTY_PRECISION = config["QTY_PRECISION"]
+NumberOfInitialBuyGrids = config["NumberOfInitialBuyGrids"]
+NumberOfInitialSellGrids = config["NumberOfInitialSellGrids"]
+NumberOfTrailingDownGrids = config["NumberOfTrailingDownGrids"]
+NumberOfTrailingUpGrids = config["NumberOfTrailingUpGrids"]
+TrailDown_start_grids = config["TrailDown_start_grids"]
+TrailUp_start_grids = config["TrailUp_start_grids"]
+BuyingDipStartDropPercent = config["BuyingDipStartDropPercent"]
+BuyingDipGridDepthPercent = config["BuyingDipGridDepthPercent"]
+NumberOfBuyingDipGrids = config["NumberOfBuyingDipGrids"]
+BuyingDipQtyPerOrder = config["BuyingDipQtyPerOrder"]
 
-try:
-    imported_module = importlib.import_module(module_name)
-    print(f"Module {module_name} imported successfully.")
 
-except ImportError:
-        print(f"Failed to import module {module_name}.")
+NumberOfTotalGrids = NumberOfInitialBuyGrids  + NumberOfInitialSellGrids +NumberOfTrailingUpGrids+NumberOfTrailingDownGrids
 
 
-globals().update(vars(imported_module))
-
-
-
-io_file = CurrentSymbol+"_spot.log"
+io_file = CurrentSymbol+"_spot.txt"
 
 
 trail_down_trigger_price = 0
@@ -63,13 +108,18 @@ baseline_price = initial_price
 grid_depth = round(initial_price * ProfitRate, PRICE_PRECISION)
 
 ProfitPerGrid= grid_depth * ProfitRate
-GridProfit=0
-FloatingProfit=0
-TotalProfit=0
-Position = 0
-CostForPosition = 0
+
 
 n_trail_up_or_down = 0
+
+SumBuyAmount=0
+SumSellAmount=0
+SumBuyValue=0
+SumSellValue=0
+current_price=0
+price_to_buy=0
+price_to_sell=0
+
 
 class Logger(object):
     def __init__(self, filename="Default.log"):
@@ -85,7 +135,7 @@ class Logger(object):
 
 
 sys.stdout = Logger(io_file)
-print("\n\n %s *******------------->    Trading bot started @ %.4f" %( datetime.now(), initial_price))
+print("\n\n %s ======>    Trading bot started @ %.4f" %( datetime.now(), initial_price))
 
 class GridTradeNode:
     def __init__(self):
@@ -94,8 +144,6 @@ class GridTradeNode:
         self.order_status = OrderStatus_NotStarted
         self.order_id = 0
         self.node_status = NODE_STATUS_INACTIVE
-        self.buy_order_executed_price = 0
-        self.sell_order_executed_price = 0
 
 ## 1 Initializing Nodes
 GridTradeNodeList = []
@@ -108,11 +156,8 @@ for i in range(NumberOfTotalGrids):
     GridTradeNodeList.append(node)
 
 
-###
 
-### 2 Placing Initial BUY Order
-
-#2.1
+### 2 Initial POSITION
 price_to_buy = round(initial_price* MARKET_BUY_ADDITIONAL_RATE, PRICE_PRECISION)
 quantity_to_buy= round(NumberOfInitialSellGrids * QtyPerOrder * FIRST_PART_INITIAL_BUY_ORDER_PERCENT,QTY_PRECISION)
 
@@ -125,18 +170,16 @@ for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTraili
     GridTradeNodeList[i].node_status = NODE_STATUS_ACTIVE
 
 
-
 while (True):
-    time.sleep(20)
+    time.sleep(30)
     try:
         order = client.get_order(symbol=CurrentSymbol,orderId=order_id)
         if (order['status'] == 'FILLED'):
             for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids+NumberOfInitialSellGrids):
                 GridTradeNodeList[i].order_status = OrderStatus_BuyOrderFilled
-                GridTradeNodeList[i].buy_order_executed_price = initial_price
-                Position += QtyPerOrder
-                CostForPosition += QtyPerOrder*price_to_buy
-            print("First part of Initial BUY order of %.4f  @ %.4f is filled, CostForPosition=%.4f" %(quantity_to_buy, price_to_buy, CostForPosition) )
+                SumBuyAmount +=QtyPerOrder
+                SumBuyValue+=QtyPerOrder*price_to_buy
+            print("Initial BUY order filled.    Price=%.2f     amount=%.4f%    SumBuyValue=%.4f" %(price_to_buy,quantity_to_buy,SumBuyValue) )
 
             break
         else:
@@ -144,17 +187,9 @@ while (True):
     except:
         print("Exception!!! Exception occured while getting buy order status")
 
-#2.2 
-#price_to_buy = round(initial_price* SECOND_PART_INITIAL_BUY_ORDER_PRICE_RATE, PRICE_PRECISION)
-#quantity_to_buy= round(NumberOfInitialSellGrids * QtyPerOrder * (1-FIRST_PART_INITIAL_BUY_ORDER_PERCENT),QTY_PRECISION)
 
-#order = client.order_limit_buy(symbol=CurrentSymbol, quantity=quantity_to_buy, price=price_to_buy)
-#order_id = order['orderId']
-#print("Second part of Initial BUY order of %.4f  @ %.4f is placed", quantity_to_buy, price_to_buy)
-
-
-
-#2.3
+## 3 Initial Orders
+### 3.1 Placing Initial BUY Orders
 for i in range(NumberOfTrailingDownGrids, NumberOfTrailingDownGrids+NumberOfInitialBuyGrids):
     GridTradeNodeList[i].node_status = NODE_STATUS_ACTIVE
     price_to_buy= GridTradeNodeList[i].price_buy
@@ -163,10 +198,7 @@ for i in range(NumberOfTrailingDownGrids, NumberOfTrailingDownGrids+NumberOfInit
     GridTradeNodeList[i].order_status = OrderStatus_BuyOrderPlaced
     time.sleep(1)
 
-###
-
-
-### 3 Placing Initial Sell Order
+### 3.2 Placing Initial SELL Orders
 for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTrailingDownGrids + NumberOfInitialBuyGrids + NumberOfInitialSellGrids):
     price_to_sell = GridTradeNodeList[i].price_sell
     order = client.order_limit_sell(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_sell)
@@ -174,43 +206,64 @@ for i in range(NumberOfTrailingDownGrids+NumberOfInitialBuyGrids, NumberOfTraili
     GridTradeNodeList[i].order_status = OrderStatus_SellOrderPlaced
     time.sleep(2)
 
-
 for i in range(NumberOfTotalGrids):
     print("%d(%d) - node state %d - BUY %.2f - SELL %.2f order id %d - order state %d" %
        ( i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids, GridTradeNodeList[i].node_status,
        GridTradeNodeList[i].price_buy,GridTradeNodeList[i].price_sell, GridTradeNodeList[i].order_id, GridTradeNodeList[i].order_status ))
 
-
-### 3 Placing Initial Buying Dip Orders
-
-
+### 3.3 Placing Initial Buying Dip Orders
 for i in range(NumberOfBuyingDipGrids):
     price_to_buy = round( initial_price * (1 - BuyingDipStartDropPercent - BuyingDipGridDepthPercent* i),PRICE_PRECISION  )
     order = client.order_limit_buy(symbol=CurrentSymbol, quantity=BuyingDipQtyPerOrder, price=price_to_buy)
     percent_rate = ((price_to_buy- initial_price)/initial_price )*100
-    print("Placing a buying dip order, %.4f  price_to_buy %.2f%% " % ( price_to_buy, percent_rate) )
+    #print("Placing a buying dip order, price_to_buy=%.4f  percent_rate %.2f%% " % ( price_to_buy, percent_rate) )
 
     time.sleep(1)
-
 
 
 ###
 
 ticks= 0
 matched_number=0
-new_matched=0
 
 trail_up_counter  = 0
 trail_down_counter  = 0
+
+
+def print_profit():
+    global SumBuyAmount
+    global SumSellAmount
+    global SumBuyValue
+    global SumSellValue
+    global current_price
+    global matched_number
+
+    average_buy_price =SumBuyValue/SumBuyAmount
+    average_sell_price =SumSellValue/SumSellAmount
+
+    RealizedPNL = (average_sell_price - average_buy_price)*SumSellAmount
+    position = SumBuyAmount- SumSellAmount
+    position_value=position*current_price
+    UnrealizedPNL = position * (current_price - average_buy_price)
+
+    print("current_price=%.4f   RealizedPNL=%.4f UnrealizedPNL=%.4f matched_number=%d" %(current_price,RealizedPNL,UnrealizedPNL,matched_number)  )
+    print("SumBuyAmount=%.4f   SumBuyValue=%.4f    average_buy_price=%.4f    SumSellAmount=%.4f   SumSellValue=%.4f    average_sell_price=%.4f  position=%.4f   current_position_value =%.4f"
+         % (current_price,  SumBuyAmount,SumBuyValue,average_buy_price,SumSellAmount,SumSellValue,average_sell_price,position,position_value))
 
 
 ### Main Loop
 while (True):
     time.sleep(120)
     ticks+=1
-    new_matched=0
     current_time = datetime.now()
 
+    try:
+        CurrentPrice = client.get_symbol_ticker(symbol=CurrentSymbol)
+        current_price = round( float(CurrentPrice['price']),PRICE_PRECISION )
+    except:
+        print(traceback.format_exc())
+        print("Failed to get current price， sleep for 120s.")
+        continue
 
     for i in range(NumberOfTotalGrids):
         if ( GridTradeNodeList[i].node_status == NODE_STATUS_INACTIVE):
@@ -226,23 +279,7 @@ while (True):
             continue
 
         if (order['status'] == 'FILLED'):
-            try:
-                CurrentPrice = client.get_symbol_ticker(symbol=CurrentSymbol)
-                current_price = round( float(CurrentPrice['price']),PRICE_PRECISION )
-            except:
-                print(traceback.format_exc())
-                print("Failed to get current price")
-
             if (GridTradeNodeList[i].order_status == OrderStatus_SellOrderPlaced):
-                GridTradeNodeList[i].sell_order_executed_price =  GridTradeNodeList[i].price_sell
-                Position -= QtyPerOrder
-                print("Before,, CostForPosition is %.4f, GridProfit is %.4f" %(CostForPosition, GridProfit))
-                CostForPosition -= QtyPerOrder * GridTradeNodeList[i].buy_order_executed_price
-                GridProfit = GridProfit + (GridTradeNodeList[i].sell_order_executed_price - GridTradeNodeList[i].buy_order_executed_price)* QtyPerOrder
-                print("After, CostForPosition is %.4f, GridProfit is %.4f " %(CostForPosition, GridProfit))
-
-                new_matched=1
-                matched_number +=1
 
                 price_to_buy = GridTradeNodeList[i].price_buy
                 if( price_to_buy > current_price):
@@ -250,46 +287,31 @@ while (True):
                     print(" ############## >>>>>>> Special case, that price_to_buy is higher than current price, using %.4f" 
                           %(current_price)) 
 
-                print("%s %d (%d):   SELL Order Filled at %.2f,  Profit +++++++++++++++   placing a new BUY at --> %.2f  TotalMatched :%d  "
+                print("%s %d (%d):   SELL Order Filled at %.2f,  MatchedNumber++    placing a new BUY at --> %.2f  TotalMatched :%d  "
                 % ( current_time,i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids ,
-                    GridTradeNodeList[i].sell_order_executed_price, price_to_buy, matched_number))
-
+                    GridTradeNodeList[i].price_sell, price_to_buy, matched_number))
 
                 try:
                     order = client.order_limit_buy(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_buy)
                     GridTradeNodeList[i].order_id = order['orderId']
                     GridTradeNodeList[i].order_status = OrderStatus_BuyOrderPlaced
                 except:
-                    rint(traceback.format_exc())
+                    print(traceback.format_exc())
                     print("%s  %d (%d) Failed to place a new BUY order at price %.4f .\n"
                             %(current_time, i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids,price_to_buy))
 
-                # print the profits
-                try:
-                    FloatingProfit = current_price * Position - CostForPosition
-                    TotalProfit = FloatingProfit + GridProfit
+                SumSellAmount+=QtyPerOrder
+                SumSellValue += QtyPerOrder * GridTradeNodeList[i].price_sell
+                matched_number +=1
 
-                    print(" CostForPosition -- %.4f, CostForPosition =%.4f, Position=%.4f, current_price=%.4f, current_position_value =%.4f \n"
-                                        % (QtyPerOrder * GridTradeNodeList[i].buy_order_executed_price, CostForPosition,Position,current_price,Position*current_price))
-
-                    print("Matched times:%d  Grid Profit is %.4f, FloatingProfit is %.4f, Total Profit is %.4f, position is %.4f \n"
-                        % (matched_number, GridProfit, FloatingProfit, TotalProfit, Position))
-
-
-                        
-                except:
-                    print("Failed to get print profits" )
-
+                print("SumSellAmount+=%.4f   SumSellValue+=%.4f MatchedNumber+=1" %(QtyPerOrder, QtyPerOrder * GridTradeNodeList[i].price_sell))
+                print_profit()
 
 
             elif (GridTradeNodeList[i].order_status == OrderStatus_BuyOrderPlaced):
 
-                GridTradeNodeList[i].buy_order_executed_price =  GridTradeNodeList[i].price_buy
-                Position += QtyPerOrder
-                print("Before++, CostForPosition is %.4f" %(CostForPosition))
-                CostForPosition += QtyPerOrder*GridTradeNodeList[i].price_buy
-                print("After++, CostForPosition is %.4f" %(CostForPosition))
-
+                SumBuyAmount+=QtyPerOrder
+                SumBuyValue += QtyPerOrder * GridTradeNodeList[i].price_buy
 
                 price_to_sell = GridTradeNodeList[i].price_sell
                 if( price_to_sell < current_price):
@@ -298,7 +320,7 @@ while (True):
                           %(current_price)) 
 
                 print("%s %d (%d):  BUY Order Filled at %.2f, placing a new SELL at --> %.2f ."
-                    % (current_time,  i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids , GridTradeNodeList[i].buy_order_executed_price, price_to_sell))
+                    % (current_time,  i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids , GridTradeNodeList[i].price_buy, price_to_sell))
 
                 try:
                     order = client.order_limit_sell(symbol=CurrentSymbol, quantity=QtyPerOrder, price=price_to_sell)
@@ -309,31 +331,8 @@ while (True):
                     print("%s  %d (%d) Failed to place a new SELL order at price %.4f \n"
                            %(current_time, i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids,price_to_sell))
 
-                # print the profits
-                try:
-                    CurrentPrice = client.get_symbol_ticker(symbol=CurrentSymbol)
-                    current_price = round( float(CurrentPrice['price']),PRICE_PRECISION )
-                    FloatingProfit = current_price * Position - CostForPosition
-                    TotalProfit = FloatingProfit + GridProfit
-
-                    print(" CostForPosition ++ %.4f, CostForPosition =%.4f, Position=%.4f, current_price=%.4f, current_position_value =%.4f \n"
-                                        % (QtyPerOrder * GridTradeNodeList[i].buy_order_executed_price, CostForPosition,Position,current_price,Position*current_price))
-
-                    print("Matched times:%d  Grid Profit is %.4f, FloatingProfit is %.4f, Total Profit is %.4f, position is %.4f \n"
-                        % (matched_number, GridProfit, FloatingProfit, TotalProfit, Position))
-
-                except:
-                    print(traceback.format_exc())
-                    print("%s Failed to get current price" %(current_time) );
-
- 
-    try:
-        CurrentPrice = client.get_symbol_ticker(symbol=CurrentSymbol)
-    except:
-        print(traceback.format_exc())
-        continue
-    current_price = round( float(CurrentPrice['price']),PRICE_PRECISION )
-
+                print("SumBuyAmount+=%.4f   SumBuyValue+=%.4f" %(SumBuyAmount,SumBuyValue))
+                print_profit()
 
 
     #Need to trail up or down?
@@ -344,14 +343,13 @@ while (True):
         print("%s, <<<<------- Trailing down! current_price is %.4f, trail_down_trigger_price is %.4f " % (datetime.now(),current_price, trail_down_trigger_price) )
 
 
-
         highest_index= NumberOfTrailingDownGrids+ NumberOfInitialBuyGrids + NumberOfInitialSellGrids + n_trail_up_or_down -1
         print("Before trailing Down,  highest_index is %d, Node states:" % (highest_index))
         for i in range(NumberOfTotalGrids):
-            print("%d (%d): note state %d - BUY %.2f - SELL %.2f - order id %d - order state %d - last buy %f - last sell %f \n" %
+            print("%d (%d): note state %d - BUY %.2f - SELL %.2f - order id %d - order state %d\n" %
                    ( i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids, GridTradeNodeList[i].node_status,
                    GridTradeNodeList[i].price_buy,GridTradeNodeList[i].price_sell, GridTradeNodeList[i].order_id,
-                   GridTradeNodeList[i].order_status, GridTradeNodeList[i].buy_order_executed_price, GridTradeNodeList[i].sell_order_executed_price ))
+                   GridTradeNodeList[i].order_status ))
 
 
         # First Step for trailing down, is to cancel the highest SELL Order
@@ -401,29 +399,15 @@ while (True):
 
 
         # TODO  check if it is really sold?
-        #The market sell is counted to the highest active node., we suppose it is sold at current_price
-        GridTradeNodeList[highest_index].sell_order_executed_price = current_price
-        Position -= QtyPerOrder
-        print("Before trail down, CostForPosition is %.4f, GridProfit is %.4f"
-             % (CostForPosition, GridProfit))
-        CostForPosition -= QtyPerOrder * GridTradeNodeList[highest_index].buy_order_executed_price
-        profit_for_market_sell = (GridTradeNodeList[highest_index].sell_order_executed_price - GridTradeNodeList[highest_index].buy_order_executed_price)* QtyPerOrder
-        GridProfit = GridProfit + profit_for_market_sell
-        FloatingProfit = current_price * Position - CostForPosition
-        TotalProfit = FloatingProfit + GridProfit
 
+        SumSellAmount+=QtyPerOrder
+        SumSellValue+= QtyPerOrder*price_to_sell
 
-        print("TrailDown,the canceld grid is sold at %.4f  single_grid_profit = %.4f" 
-        %(GridTradeNodeList[highest_index].sell_order_executed_price, profit_for_market_sell ))
+        print("SumSellAmount+=%.4f   SumSellValue+=%.4f MatchedNumber+=1" %(QtyPerOrder, QtyPerOrder * price_to_sell))
+        print_profit()
 
-        print("After TrailDown-> costForPosition-= %.4f  costForPosition=  %.4f, Position = %.4f current_price=%.4f, current_position_value =%.4f " 
-        %(QtyPerOrder * GridTradeNodeList[highest_index].buy_order_executed_price,CostForPosition, Position,current_price,Position*current_price ))
-
-
-        
-        print("After TrailDown-> Matched times:%d  Grid Profit is %.4f, FloatingProfit is %.4f, Total Profit is %.4f, position is %.4f \n"
-            % (matched_number, GridProfit, FloatingProfit, TotalProfit, Position))
-
+        print("After trailing down->")
+        print_profit()
 
 
         GridTradeNodeList[highest_index].node_status = NODE_STATUS_INACTIVE
@@ -452,12 +436,12 @@ while (True):
         trail_down_counter += 1
 
 
-        print("After trailing Down, new baseline_price is %.4f" % (baseline_price))
+        print("After trailing Down, new baseline_price is %.4f, trail_down_counter is %d" % (baseline_price,trail_down_counter))
         for i in range(NumberOfTotalGrids):
-            print("%d (%d): note state %d - BUY %.2f - SELL %.2f - order id %d - order state %d - last buy %f - last sell %f \n" %
+            print("%d (%d): note state %d - BUY %.2f - SELL %.2f - order id %d - order state %d" %
                    ( i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids, GridTradeNodeList[i].node_status,
                    GridTradeNodeList[i].price_buy,GridTradeNodeList[i].price_sell, GridTradeNodeList[i].order_id,
-                   GridTradeNodeList[i].order_status, GridTradeNodeList[i].buy_order_executed_price, GridTradeNodeList[i].sell_order_executed_price ))
+                   GridTradeNodeList[i].order_status ))
 
 
 
@@ -471,10 +455,10 @@ while (True):
         print("Before trailing UP,  lowest_index is %d, Node states:" % (lowest_index))
 
         for i in range(NumberOfTotalGrids):
-            print("%d (%d) - node state %d - BUY %.2f - SELL %.2f - order id %d - order state %d, last buy %f - last sell %f" %
+            print("%d (%d) - node state %d - BUY %.2f - SELL %.2f - order id %d - order state %d" %
               ( i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids, GridTradeNodeList[i].node_status,
                GridTradeNodeList[i].price_buy,GridTradeNodeList[i].price_sell, GridTradeNodeList[i].order_id,
-               GridTradeNodeList[i].order_status, GridTradeNodeList[i].buy_order_executed_price, GridTradeNodeList[i].sell_order_executed_price ))
+               GridTradeNodeList[i].order_status ))
 
         time.sleep(2)
 
@@ -499,7 +483,7 @@ while (True):
         time.sleep(15)
 
 
-        #5.2 Second step is to sell QtyPerOrder
+        #5.2 Second step is to BUY QtyPerOrder
         retry_counter = 3
 
         if( need_to_buy_for_trail_up == 1 ):
@@ -522,38 +506,25 @@ while (True):
 
             except:
                 print(traceback.format_exc())
-                print("Trailing down, failed to sell at current price for trailing down ")
+                print("Trailing UP, failed to sell at current price for trailing UP ")
 
 
 
         # TODO  check if the Market_BUY is successful
-        # We suppose the Market_BUY is successful, so the price_executed is current price,i it is counted to the new Node
-        highest_index= NumberOfTrailingDownGrids + NumberOfInitialBuyGrids +NumberOfInitialSellGrids+ n_trail_up_or_down -1
-        GridTradeNodeList[highest_index+1].node_status = NODE_STATUS_ACTIVE
-        GridTradeNodeList[highest_index+1].buy_order_executed_price = current_price
 
-        Position += QtyPerOrder
-        print("Before trail UP, CostForPosition is %.4f"    % (CostForPosition))
-        CostForPosition += QtyPerOrder * GridTradeNodeList[highest_index+1].buy_order_executed_price
-
-
-        FloatingProfit = current_price * Position - CostForPosition
-        TotalProfit = FloatingProfit + GridProfit
-
-        print("Trail UP,the new grid: buy price %.4f " 
-        %(GridTradeNodeList[highest_index+1].buy_order_executed_price ))
-        print("After TrailUP-> CostForPosition +=%.4f, CostForPosition =%.4f, Position=%.4f, current_price=%.4f, current_position_value =%.4f \n"
-                            % (QtyPerOrder * GridTradeNodeList[highest_index+1].buy_order_executed_price, 
-                               CostForPosition,Position,current_price,Position*current_price))
-        
-        print("After TrailUP-> Matched times:%d  Grid Profit is %.4f, FloatingProfit is %.4f, Total Profit is %.4f, position is %.4f \n"
-            % (matched_number, GridProfit, FloatingProfit, TotalProfit, Position))
+        SumBuyAmount+=QtyPerOrder
+        SumBuyValue+= QtyPerOrder*price_to_buy
+        print("TrailUP: SumBuyAmount+=%.4f   SumBuyValue+=%.4f" %(QtyPerOrder,QtyPerOrder*price_to_buy))
+        print_profit()
 
 
         time.sleep(7)
 
 
+
         #5.3  Third Step is to add a highest SELl order
+        highest_index= NumberOfTrailingDownGrids + NumberOfInitialBuyGrids +NumberOfInitialSellGrids+ n_trail_up_or_down -1
+        GridTradeNodeList[highest_index+1].node_status = NODE_STATUS_ACTIVE
 
         price_to_sell = GridTradeNodeList[highest_index+1].price_sell
 
@@ -573,12 +544,12 @@ while (True):
         n_trail_up_or_down += 1
         trail_up_counter += 1
 
-        print("After trailing Up, new baseline_price is, node states:", baseline_price)
+        print("After trailing Up, new baseline_price is %.4f trail_up_counter is %d" % (baseline_price, trail_up_counter))
         for i in range(NumberOfTotalGrids):
-            print("%d (%d) - node state %d - BUY %.2f - SELL %.2f - order id %d - order state %d, last buy %f - last sell %f" %
+            print("%d (%d) - node state %d - BUY %.2f - SELL %.2f - order id %d - order state %d" %
               ( i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids, GridTradeNodeList[i].node_status,
                GridTradeNodeList[i].price_buy,GridTradeNodeList[i].price_sell, GridTradeNodeList[i].order_id,
-               GridTradeNodeList[i].order_status, GridTradeNodeList[i].buy_order_executed_price, GridTradeNodeList[i].sell_order_executed_price ))
+               GridTradeNodeList[i].order_status))
 
     else:
         if( n_trail_up_or_down > NumberOfTrailingUpGrids ):
@@ -589,8 +560,6 @@ while (True):
                 print("We have hit the Trail Down limt.  n_trail_up_or_down is %d" % (n_trail_up_or_down))
 
 
-
-### Buying the dip
 
 
 
