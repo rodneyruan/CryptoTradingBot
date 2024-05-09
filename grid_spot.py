@@ -179,13 +179,14 @@ while (True):
                 GridTradeNodeList[i].order_status = OrderStatus_BuyOrderFilled
                 SumBuyAmount +=QtyPerOrder
                 SumBuyValue+=QtyPerOrder*price_to_buy
-            print("Initial BUY order filled.    Price=%.2f     amount=%.4f%    SumBuyValue=%.4f" %(price_to_buy,quantity_to_buy,SumBuyValue) )
+            print("Initial BUY order filled.    Price=%.2f     amount=%.4f    SumBuyValue=%.4f" %(price_to_buy,quantity_to_buy,SumBuyValue) )
 
             break
         else:
             print("Order Status is ",order['status'])
     except:
         print("Exception!!! Exception occured while getting buy order status")
+        print(traceback.format_exc())
 
 
 ## 3 Initial Orders
