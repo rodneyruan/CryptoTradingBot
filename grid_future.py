@@ -189,12 +189,12 @@ if( Direction == "Long" ):
                     SumBuyValue+=QtyPerOrder*price_to_buy
                 print("First Part initial BUY order filled.    Price=%.2f     amount=%.4f    SumBuyValue=%.4f" %(price_to_buy,quantity_to_buy,SumBuyValue) )
 
-            break
-        else:
-            print("Order Status is ",order['status'])
-    except:
-        print("Exception!!! Exception occured while getting buy order status")
-        print(traceback.format_exc())
+                break
+            else:
+                print("Order Status is ",order['status'])
+        except:
+            print("Exception!!! Exception occured while getting buy order status")
+            print(traceback.format_exc())
 
 
     price_to_buy = round(initial_price*SECOND_INITIAL_BUY_PRICE_RATE,PRICE_PRECISION)
@@ -228,9 +228,9 @@ elif( Direction == "Short" ):
                     SumSellValue+=QtyPerOrder*price_to_sell
 
                 print("First Part initial SELL order filled, qty=%.4f, price=%.4f, SumSellValue=%.4f" %(quantity_to_sell, price_to_sell, SumSellValue) )
-            break
-        else:
-            print("Order Status is ",order['status'])
+                break
+            else:
+                print("Order Status is ",order['status'])
         except:
             print("Exception!!! Exception occured while getting buy order status")
             print(traceback.format_exc())
@@ -286,6 +286,9 @@ def print_profit():
     global current_price
     global matched_number
 
+    average_sell_price=0
+    average_buy_price=0
+
     if SumBuyAmount != 0 :
         average_buy_price =SumBuyValue/SumBuyAmount
     if SumSellAmount != 0 :
@@ -299,7 +302,7 @@ def print_profit():
 
     print("current_price=%.4f   RealizedPNL=%.4f UnrealizedPNL=%.4f matched_number=%d" %(current_price,RealizedPNL,UnrealizedPNL,matched_number)  )
     print("SumBuyAmount=%.4f   SumBuyValue=%.4f    average_buy_price=%.4f    SumSellAmount=%.4f   SumSellValue=%.4f    average_sell_price=%.4f  position=%.4f   current_position_value =%.4f"
-         % (current_price,  SumBuyAmount,SumBuyValue,average_buy_price,SumSellAmount,SumSellValue,average_sell_price,position,position_value))
+         % ( SumBuyAmount,SumBuyValue,average_buy_price,SumSellAmount,SumSellValue,average_sell_price,position,position_value))
 
 
 ### Main Loop

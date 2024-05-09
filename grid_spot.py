@@ -244,10 +244,14 @@ def print_profit():
     global current_price
     global matched_number
 
+    average_sell_price=0
+    average_buy_price=0
+
     if SumBuyAmount != 0 :
         average_buy_price =SumBuyValue/SumBuyAmount
     if SumSellAmount != 0 :
         average_sell_price =SumSellValue/SumSellAmount
+
 
     RealizedPNL = (average_sell_price - average_buy_price)*SumSellAmount
     position = SumBuyAmount- SumSellAmount
@@ -256,7 +260,7 @@ def print_profit():
 
     print("current_price=%.4f   RealizedPNL=%.4f UnrealizedPNL=%.4f matched_number=%d" %(current_price,RealizedPNL,UnrealizedPNL,matched_number)  )
     print("SumBuyAmount=%.4f   SumBuyValue=%.4f    average_buy_price=%.4f    SumSellAmount=%.4f   SumSellValue=%.4f    average_sell_price=%.4f  position=%.4f   current_position_value =%.4f"
-         % (current_price,  SumBuyAmount,SumBuyValue,average_buy_price,SumSellAmount,SumSellValue,average_sell_price,position,position_value))
+         % ( SumBuyAmount,SumBuyValue,average_buy_price,SumSellAmount,SumSellValue,average_sell_price,position,position_value))
 
 
 ### Main Loop
