@@ -244,8 +244,10 @@ def print_profit():
     global current_price
     global matched_number
 
-    average_buy_price =SumBuyValue/SumBuyAmount
-    average_sell_price =SumSellValue/SumSellAmount
+    if SumBuyAmount != 0 :
+        average_buy_price =SumBuyValue/SumBuyAmount
+    if SumSellAmount != 0 :
+        average_sell_price =SumSellValue/SumSellAmount
 
     RealizedPNL = (average_sell_price - average_buy_price)*SumSellAmount
     position = SumBuyAmount- SumSellAmount
