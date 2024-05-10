@@ -272,7 +272,7 @@ for i in range(NumberOfTotalGrids):
 
 
 ticks= 0
-matched_number=0
+
 
 trail_up_counter  = 0
 trail_down_counter  = 0
@@ -284,7 +284,6 @@ def print_profit():
     global SumBuyValue
     global SumSellValue
     global current_price
-    global matched_number
 
     average_sell_price=0
     average_buy_price=0
@@ -294,11 +293,17 @@ def print_profit():
     if SumSellAmount != 0 :
         average_sell_price =SumSellValue/SumSellAmount
 
+    matched_number = min(SumSellAmount,SumBuyAmount)
 
-    RealizedPNL = (average_sell_price - average_buy_price)*SumSellAmount
     position = SumBuyAmount- SumSellAmount
     position_value=position*current_price
-    UnrealizedPNL = position * (current_price - average_buy_price)
+
+    if(SumBuyAmount > SumSellAmount):
+        RealizedPNL = (average_sell_price - average_buy_price)*SumSellAmount
+        UnrealizedPNL = position * (current_price - average_buy_price)
+    else:
+        RealizedPNL = (average_sell_price - average_buy_price)*SumBuyAmount
+        UnrealizedPNL = position * (current_price - average_sell_price)   
 
     print("current_price=%.4f   RealizedPNL=%.4f UnrealizedPNL=%.4f matched_number=%d" %(current_price,RealizedPNL,UnrealizedPNL,matched_number)  )
     print("SumBuyAmount=%.4f   SumBuyValue=%.4f    average_buy_price=%.4f    SumSellAmount=%.4f   SumSellValue=%.4f    average_sell_price=%.4f  position=%.4f   current_position_value =%.4f"
@@ -341,9 +346,9 @@ while (True):
                     print(" ############## >>>>>>> Special case, that price_to_buy is higher than current price, using %.4f" 
                           %(current_price)) 
 
-                print("%s %d (%d):   SELL Order Filled at %.2f,  MatchedNumber++    placing a new BUY at --> %.2f  TotalMatched :%d  "
+                print("%s %d (%d):   SELL Order Filled at %.2f,  MatchedNumber++    placing a new BUY at --> %.2f   "
                 % ( current_time,i, i-NumberOfTrailingDownGrids-NumberOfInitialBuyGrids ,
-                    GridTradeNodeList[i].price_sell, price_to_buy, matched_number))
+                    GridTradeNodeList[i].price_sell, price_to_buy))
 
                 try:
                     order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_BUY, type='LIMIT',
@@ -357,7 +362,6 @@ while (True):
 
                 SumSellAmount+=QtyPerOrder
                 SumSellValue += QtyPerOrder * GridTradeNodeList[i].price_sell
-                matched_number +=1
 
                 print("SumSellAmount+=%.4f   SumSellValue+=%.4f MatchedNumber+=1" %(QtyPerOrder, QtyPerOrder * GridTradeNodeList[i].price_sell))
                 print_profit()
@@ -618,12 +622,6 @@ while (True):
         elif( (NumberOfTrailingDownGrids + n_trail_up_or_down) < 0 ):
             if(ticks %10 == 1):
                 print("We have hit the Trail Down limt.  n_trail_up_or_down is %d" % (n_trail_up_or_down))
-
-
-
-
-
-
 
 
 
