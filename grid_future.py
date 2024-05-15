@@ -284,6 +284,8 @@ def print_profit():
     global SumBuyValue
     global SumSellValue
     global current_price
+    global trail_up_counter
+    global trail_down_counter
 
     average_sell_price=0
     average_buy_price=0
@@ -293,7 +295,7 @@ def print_profit():
     if SumSellAmount != 0 :
         average_sell_price =SumSellValue/SumSellAmount
 
-    matched_number = min(SumSellAmount,SumBuyAmount)
+    matched_number = min(SumSellAmount,SumBuyAmount) // QtyPerOrder - trail_down_counter - trail_up_counter
 
     position = SumBuyAmount- SumSellAmount
     position_value=position*current_price
@@ -305,7 +307,7 @@ def print_profit():
         RealizedPNL = (average_sell_price - average_buy_price)*SumBuyAmount
         UnrealizedPNL = position * (current_price - average_sell_price)   
 
-    print("current_price=%.4f   RealizedPNL=%.4f UnrealizedPNL=%.4f matched_number=%d" %(current_price,RealizedPNL,UnrealizedPNL,matched_number)  )
+    print("current_price=%.4f   RealizedPNL=%.4f UnrealizedPNL=%.4f matched_number=%.2f" %(current_price,RealizedPNL,UnrealizedPNL,matched_number)  )
     print("SumBuyAmount=%.4f   SumBuyValue=%.4f    average_buy_price=%.4f    SumSellAmount=%.4f   SumSellValue=%.4f    average_sell_price=%.4f  position=%.4f   current_position_value =%.4f"
          % ( SumBuyAmount,SumBuyValue,average_buy_price,SumSellAmount,SumSellValue,average_sell_price,position,position_value))
 
