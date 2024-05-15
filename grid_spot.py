@@ -271,7 +271,7 @@ def print_profit():
 
 ### Main Loop
 while (True):
-    time.sleep(120)
+    time.sleep(180)
     ticks+=1
     current_time = datetime.now()
 
