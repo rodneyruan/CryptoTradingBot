@@ -1,4 +1,4 @@
-import time
+mport time
 from binance.client import Client
 #import pandas as pd
 #import ta
@@ -142,6 +142,50 @@ class Logger(object):
 
 sys.stdout = Logger(io_file)
 print("\n\n %s ======>    Trading bot started @%.4f" %( datetime.now(), initial_price))
+
+CostAtTrailDown=0
+ValueAtTrailDown=0
+CostAtTrailUp=0
+ValueAtTrailUp=0
+
+if( Direction == "Long" ):
+    CostAtTrailDown += ( NumberOfInitialSellGrids * QtyPerOrder * FIRST_INITIAL_BUY_PERCENTAGE *initial_price* MARKET_BUY_ADDITIONAL_RATE )
+    CostAtTrailDown += ( NumberOfInitialSellGrids * QtyPerOrder * (1-FIRST_INITIAL_BUY_PERCENTAGE) *initial_price* SECOND_INITIAL_BUY_PRICE_RATE )
+    CostAtTrailDown += ( NumberOfInitialBuyGrids * QtyPerOrder * initial_price * (1- (1+NumberOfInitialBuyGrids)/2*ProfitRate  ))
+    print("Total investment: %.4f " %( CostAtTrailDown))
+    LowestBuyPrice = initial_price* (1-NumberOfInitialBuyGrids* ProfitRate)
+    ValueAtTrailDown= LowestBuyPrice *QtyPerOrder * (NumberOfInitialSellGrids+NumberOfInitialBuyGrids)
+    LossAtTrailDown = ValueAtTrailDown-CostAtTrailDown
+    print("Loss At Trail Down = %.4f, LowestBuyPrice=%.4f " %(LossAtTrailDown,LowestBuyPrice))
+
+elif( Direction == "Short" ):
+    CostAtTrailUp += ( NumberOfInitialBuyGrids * QtyPerOrder * FIRST_INITIAL_SELL_PERCENTAGE *initial_price* MARKET_SELL_ADDITIONAL_RATE )
+    CostAtTrailUp += ( NumberOfInitialBuyGrids * QtyPerOrder * (1-FIRST_INITIAL_SELL_PERCENTAGE) *initial_price* SECOND_INITIAL_SELL_PRICE_RATE )
+    CostAtTrailUp += ( NumberOfInitialSellGrids * QtyPerOrder * initial_price * (1+ (1+NumberOfInitialSellGrids)/2*ProfitRate  ))
+    print("Total investment: %.4f " %( CostAtTrailUp))
+    HighestSellPrice= initial_price* (1+NumberOfInitialSellGrids* ProfitRate)
+    ValueAtTrailUp= HighestSellPrice*QtyPerOrder * (NumberOfInitialSellGrids+NumberOfInitialBuyGrids)
+    LossAtTrailUp = CostAtTrailUp -ValueAtTrailUp
+    print("Loss At Trail UP = %.4f   HighestSellPrice = %.4f " %( LossAtTrailUp, HighestSellPrice))
+
+
+elif( Direction == "Neutral" ):
+    CostAtTrailDown += ( NumberOfInitialBuyGrids * QtyPerOrder * initial_price * (1- (1+NumberOfInitialBuyGrids)/2*ProfitRate  ))
+    print("Total Long investment: %.4f " %( CostAtTrailDown))
+    LowestBuyPrice = initial_price* (1-NumberOfInitialBuyGrids* ProfitRate)
+    ValueAtTrailDown= LowestBuyPrice *QtyPerOrder * (NumberOfInitialBuyGrids)
+    LossAtTrailDown = ValueAtTrailDown-CostAtTrailDown
+    print("Loss At Trail Down = %.4f, LowestBuyPrice=%.4f " %(LossAtTrailDown,LowestBuyPrice))
+
+    CostAtTrailUp += ( NumberOfInitialSellGrids * QtyPerOrder * initial_price * (1+ (1+NumberOfInitialSellGrids)/2*ProfitRate  ))
+    print("Total Short investment: %.4f " %( CostAtTrailUp))
+    HighestSellPrice= initial_price* (1+NumberOfInitialSellGrids* ProfitRate)
+    ValueAtTrailUp= HighestSellPrice*QtyPerOrder * (NumberOfInitialSellGrids)
+    LossAtTrailUp = CostAtTrailUp -ValueAtTrailUp
+    print("Loss At Trail UP = %.4f   HighestSellPrice = %.4f " %( LossAtTrailUp, HighestSellPrice))
+
+
+
 
 class GridTradeNode:
     def __init__(self):

@@ -142,6 +142,21 @@ class Logger(object):
 sys.stdout = Logger(io_file)
 print("\n\n %s ======>    Trading bot started @%.4f" %( datetime.now(), initial_price))
 
+CostAtTrailDown=0
+ValueAtTrailDown=0
+Direction = "Long"
+
+if( Direction == "Long" ):
+    CostAtTrailDown += ( NumberOfInitialSellGrids * QtyPerOrder * FIRST_INITIAL_BUY_PERCENTAGE *initial_price* MARKET_BUY_ADDITIONAL_RATE )
+    CostAtTrailDown += ( NumberOfInitialSellGrids * QtyPerOrder * (1-FIRST_INITIAL_BUY_PERCENTAGE) *initial_price* SECOND_INITIAL_BUY_PRICE_RATE )
+    CostAtTrailDown += ( NumberOfInitialBuyGrids * QtyPerOrder * initial_price * (1- (1+NumberOfInitialBuyGrids)/2*ProfitRate  ))
+    print("Total investment: %.4f " %( CostAtTrailDown))
+    LowestBuyPrice = initial_price* (1-NumberOfInitialBuyGrids* ProfitRate)
+    ValueAtTrailDown= LowestBuyPrice *QtyPerOrder * (NumberOfInitialSellGrids+NumberOfInitialBuyGrids)
+    LossAtTrailDown = ValueAtTrailDown-CostAtTrailDown
+    print("Loss At Trail Down = %.4f, LowestBuyPrice=%.4f " %(LossAtTrailDown,LowestBuyPrice))
+
+
 class GridTradeNode:
     def __init__(self):
         self.price_buy = 0
