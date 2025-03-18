@@ -280,12 +280,12 @@ elif( Direction == "Short" ):
             print(traceback.format_exc())
 
     
-        price_to_sell = round(initial_price*SECOND_INITIAL_SELL_PRICE_RATE,PRICE_PRECISION)
-        quantity_to_sell= round( NumberOfInitialBuyGrids * QtyPerOrder*(1-FIRST_INITIAL_SELL_PERCENTAGE) ,QTY_PRECISION)
+    price_to_sell = round(initial_price*SECOND_INITIAL_SELL_PRICE_RATE,PRICE_PRECISION)
+    quantity_to_sell= round( NumberOfInitialBuyGrids * QtyPerOrder*(1-FIRST_INITIAL_SELL_PERCENTAGE) ,QTY_PRECISION)
 
-        order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL, type='LIMIT', quantity=quantity_to_sell, price=price_to_sell, timeInForce="GTC")
-        order_id = order['orderId']
-        print("Second part of initial SELL order is placed. quantity = %.4f  price =  %.4f " % (quantity_to_sell, price_to_sell))
+    order = client.futures_create_order(symbol=CurrentSymbol, side=client.SIDE_SELL, type='LIMIT', quantity=quantity_to_sell, price=price_to_sell, timeInForce="GTC")
+    order_id = order['orderId']
+    print("Second part of initial SELL order is placed. quantity = %.4f  price =  %.4f " % (quantity_to_sell, price_to_sell))
 
 
 ## 3 Initial Orders
@@ -668,6 +668,7 @@ while (True):
         elif( (NumberOfTrailingDownGrids + n_trail_up_or_down) < 0 ):
             if(ticks %10 == 1):
                 print("We have hit the Trail Down limt.  n_trail_up_or_down is %d" % (n_trail_up_or_down))
+
 
 
 
