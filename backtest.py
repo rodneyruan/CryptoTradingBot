@@ -10,13 +10,13 @@ client = Client(apikey, apisecret, testnet=True)
 
 # Trading parameters
 symbol = 'BTCUSDC'
-timeframe = Client.KLINE_INTERVAL_1HOUR
+timeframe = Client.KLINE_INTERVAL_15MINUTE
 ema_period = 7
-buy_threshold = 0.005  # Price 1% below EMA
-profit_target = 0.003  # 0.4% profit
+buy_threshold = 0.003  # Price 1% below EMA
+profit_target = 0.002  # 0.4% profit
 stop_loss_threshold = 0.01  # 3% stop loss
 quantity = 0.001  # Trade size in BTC
-default_limit = 200  # Default limit for get_historical_klines
+default_limit = 960  # Default limit for get_historical_klines
 
 def fetch_historical_ohlcv(symbol, timeframe, limit=default_limit):
     """Fetch the most recent historical OHLCV data from Binance Futures."""
@@ -63,13 +63,13 @@ def backtest():
     successful_trades = 0
     total_trades = 0
     
-    # Start after enough data for EMA and 3 previous candles
-    i = ema_period + 3
+    # Start after enough data for EMA and 2 previous candles
+    i = ema_period + 2
     while i < len(df) - 1:
         current_price = df['close'].iloc[i]
         latest_ema = df['ema'].iloc[i]
         
-        # Check for three consecutive negative candles
+        # Check for three consecutive negative candles (including current)
         negative_candles = all(is_negative_candle(df.iloc[j]) for j in range(i-2, i+1))
         
         # Check buy condition: 3 negative candles and price 1% below EMA
@@ -121,4 +121,3 @@ def backtest():
 
 if __name__ == "__main__":
     backtest()
-
