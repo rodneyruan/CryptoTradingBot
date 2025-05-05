@@ -206,7 +206,7 @@ def main():
                     if check_order_status(buy_order['orderId'], symbol):
                         print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Limit buy order filled")
                         break
-                    time.sleep(10)  # Check every 10 seconds
+                    time.sleep(60)  # Check every 60 seconds
                 
                 # If buy order not filled, cancel it and continue
                 if not check_order_status(buy_order['orderId'], symbol):
@@ -251,7 +251,7 @@ def main():
                         print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Stop-loss triggered: Loss: {trade_profit} USDC")
                         has_position = False
                     else:
-                        time.sleep(10)  # Check every 10 seconds
+                        time.sleep(60)  # Check every 60 seconds
                 
                 # Calculate and print success ratio
                 success_ratio = successful_trades / total_trades if total_trades > 0 else 0
