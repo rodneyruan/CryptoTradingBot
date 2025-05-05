@@ -268,8 +268,8 @@ def main():
             else:
                 print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | No buy signal. Price: {current_price}, EMA: {latest_ema}, RSI: {latest_rsi}, 3 Neg Candles: {negative_candles_3}, 4 Neg Candles: {negative_candles_4}")
             
-            # Wait for the next 15-minute candle
-            time.sleep(15 * 60)
+            # Wait 3 minutes
+            time.sleep(3 * 60)
         
         except Exception as e:
             print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Error: {e}")
