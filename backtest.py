@@ -31,7 +31,7 @@ def fetch_historical_ohlcv(symbol, timeframe, limit=default_limit):
             limit=limit
         )
         df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_volume', 'trades', 'taker_base_volume', 'taker_quote_volume', 'ignored'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms').dt.tz_localize('UTC')
         df['open'] = df['open'].astype(float)
         df['close'] = df['close'].astype(float)
         df['high'] = df['high'].astype(float)
@@ -70,7 +70,7 @@ def backtest():
     while i < len(df) - 1:
         current_price = df['close'].iloc[i]
         latest_ema = df['ema'].iloc[i]
-        candle_time = df['timestamp'].iloc[i].astimezone(tz).strftime('%Y-%m-%d %H:%M:%S')
+        candle_time = df['timestamp'].iloc[i].tz_convert(tz).strftime('%Y-%m-%d %H:%M:%S')
         
         # Print price and EMA check
         print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | {candle_time}: current_price: {current_price}, latest_ema: {latest_ema}")
