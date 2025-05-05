@@ -8,16 +8,15 @@ import pytz
 from key_config import apikey
 from key_config import apisecret
 
-
 # Binance Futures configuration
-client = Client(apikey, apisecret)
+client = Client(apikey, apisecret, testnet=True)
 
 # Trading parameters
 symbol = 'BTCUSDC'
 timeframe = Client.KLINE_INTERVAL_15MINUTE
 ema_period = 7
-buy_threshold = 0.0025  # Price 1% below EMA
-profit_target = 0.003
+buy_threshold = 0.0025  # Price 0.25% below EMA
+profit_target = 0.003  # 0.3% profit
 stop_loss_threshold = 0.03  # 3% stop loss
 quantity = 0.001  # Trade size in BTC (adjust based on account size)
 leverage = 1  # 1x leverage
@@ -77,7 +76,7 @@ def log_trade(trade_type, price, profit=0.0):
 
 def fetch_ohlcv(symbol, timeframe, limit=100):
     """Fetch OHLCV data from Binance Futures."""
-    klines = client.get_klines(symbol=symbol, interval=timeframe, limit=limit)
+    klines = client.futures_klines(symbol=symbol, interval=timeframe, limit=limit)
     df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_volume', 'trades', 'taker_base_volume', 'taker_quote_volume', 'ignored'])
     df['open'] = df['open'].astype(float)
     df['close'] = df['close'].astype(float)
@@ -168,7 +167,7 @@ def main():
     """Main trading loop."""
     global has_position, total_profit, successful_trades, total_trades
     load_historical_profit()  # Load historical profit and trade counts
-    #set_leverage(symbol, leverage)
+    # set_leverage(symbol, leverage)
     print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Starting trading bot for {symbol} on {timeframe} timeframe...")
 
     while True:
@@ -212,7 +211,7 @@ def main():
                     if check_order_status(buy_order['orderId'], symbol):
                         print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Limit buy order filled")
                         break
-                    time.sleep(60)  # Check every 10 seconds
+                    time.sleep(60)  # Check every 60 seconds
                 
                 # If buy order not filled, cancel it and continue
                 if not check_order_status(buy_order['orderId'], symbol):
@@ -270,7 +269,7 @@ def main():
                 print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | No buy signal. Price: {current_price}, EMA: {latest_ema}, RSI: {latest_rsi}, 3 Neg Candles: {negative_candles_3}, 4 Neg Candles: {negative_candles_4}")
             
             # Wait for the next 15-minute candle
-            time.sleep(3 * 60)
+            time.sleep(15 * 60)
         
         except Exception as e:
             print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Error: {e}")
