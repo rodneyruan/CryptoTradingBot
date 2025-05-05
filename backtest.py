@@ -1,9 +1,10 @@
 from binance.client import Client
 import pandas as pd
+import pytz
+from datetime import datetime
 
 from key_config import apikey
 from key_config import apisecret
-
 
 # Binance Futures configuration
 client = Client(apikey, apisecret, testnet=True)
@@ -12,11 +13,12 @@ client = Client(apikey, apisecret, testnet=True)
 symbol = 'BTCUSDC'
 timeframe = Client.KLINE_INTERVAL_15MINUTE
 ema_period = 7
-buy_threshold = 0.003  # Price 1% below EMA
-profit_target = 0.002  # 0.4% profit
-stop_loss_threshold = 0.01  # 3% stop loss
-quantity = 0.001  # Trade size in BTC
-default_limit = 960  # Default limit for get_historical_klines
+buy_threshold = 0.003  # Price 0.3% below EMA
+profit_target = 0.003  # 0.3% profit
+stop_loss_threshold = 0.01  # 1% stop loss
+quantity = 0.01  # Trade size in BTC
+default_limit = 50  # Default limit for get_historical_klines
+tz = pytz.timezone('Asia/Singapore')  # UTC+8 timezone
 
 def fetch_historical_ohlcv(symbol, timeframe, limit=default_limit):
     """Fetch the most recent historical OHLCV data from Binance Futures."""
@@ -36,7 +38,7 @@ def fetch_historical_ohlcv(symbol, timeframe, limit=default_limit):
         df['low'] = df['low'].astype(float)
         return df
     except Exception as e:
-        print(f"Error fetching klines: {e}")
+        print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Error fetching klines: {e}")
         return pd.DataFrame()
 
 def calculate_ema(df, period):
@@ -49,11 +51,11 @@ def is_negative_candle(row):
 
 def backtest():
     """Backtest the EMA strategy with profit target and stop loss."""
-    # Fetch the most recent 200 candles
+    # Fetch the most recent 50 candles
     df = fetch_historical_ohlcv(symbol, timeframe)
     
     if df.empty:
-        print("No data fetched. Exiting backtest.")
+        print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | No data fetched. Exiting backtest.")
         return
     
     # Calculate EMA
@@ -68,15 +70,19 @@ def backtest():
     while i < len(df) - 1:
         current_price = df['close'].iloc[i]
         latest_ema = df['ema'].iloc[i]
+        candle_time = df['timestamp'].iloc[i].astimezone(tz).strftime('%Y-%m-%d %H:%M:%S')
         
+        # Print price and EMA check
+        print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | {candle_time}: current_price: {current_price}, latest_ema: {latest_ema}")
+
         # Check for three consecutive negative candles (including current)
         negative_candles = all(is_negative_candle(df.iloc[j]) for j in range(i-2, i+1))
-        
-        # Check buy condition: 3 negative candles and price 1% below EMA
+
+        # Check buy condition: 3 negative candles and price 0.3% below EMA
         if negative_candles and current_price < latest_ema * (1 - buy_threshold):
             buy_price = current_price
-            profit_price = buy_price * (1 + profit_target)  # 0.4% profit
-            stop_loss_price = buy_price * (1 - stop_loss_threshold)  # 3% stop loss
+            profit_price = buy_price * (1 + profit_target)  # 0.3% profit
+            stop_loss_price = buy_price * (1 - stop_loss_threshold)  # 1% stop loss
             total_trades += 1
             
             # Simulate trade outcome by checking subsequent candles
@@ -90,7 +96,7 @@ def backtest():
                     trade_profit = (profit_price - buy_price) * quantity
                     total_profit += trade_profit
                     successful_trades += 1
-                    print(f"Trade at {df['timestamp'].iloc[i]}: Buy at {buy_price}, Take Profit at {profit_price}, Profit: {trade_profit} USDC")
+                    print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Trade at {candle_time}: Buy at {buy_price}, Take Profit at {profit_price}, Profit: {trade_profit} USDC")
                     trade_closed = True
                     i = j  # Move to the candle after the trade closes
                     break
@@ -99,25 +105,25 @@ def backtest():
                 if low_price <= stop_loss_price:
                     trade_profit = (stop_loss_price - buy_price) * quantity
                     total_profit += trade_profit
-                    print(f"Trade at {df['timestamp'].iloc[i]}: Buy at {buy_price}, Stop Loss at {stop_loss_price}, Loss: {trade_profit} USDC")
+                    print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Trade at {candle_time}: Buy at {buy_price}, Stop Loss at {stop_loss_price}, Loss: {trade_profit} USDC")
                     trade_closed = True
                     i = j  # Move to the candle after the trade closes
                     break
             
             # If trade not closed (end of data), assume it remains open and skip
             if not trade_closed:
-                print(f"Trade at {df['timestamp'].iloc[i]}: Buy at {buy_price}, Not closed by end of data")
+                print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Trade at {candle_time}: Buy at {buy_price}, Not closed by end of data")
                 break
         
         i += 1
     
     # Calculate success ratio
     success_ratio = successful_trades / total_trades if total_trades > 0 else 0
-    print(f"\nBacktest Results:")
-    print(f"Total Trades: {total_trades}")
-    print(f"Successful Trades (Take Profit): {successful_trades}")
-    print(f"Success Ratio: {success_ratio:.2%}")
-    print(f"Total Profit: {total_profit:.4f} USDC")
+    print(f"\n{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Backtest Results:")
+    print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Total Trades: {total_trades}")
+    print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Successful Trades (Take Profit): {successful_trades}")
+    print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Success Ratio: {success_ratio:.2%}")
+    print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Total Profit: {total_profit:.4f} USDC")
 
 if __name__ == "__main__":
     backtest()
