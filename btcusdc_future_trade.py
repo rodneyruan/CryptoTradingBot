@@ -9,7 +9,7 @@ from key_config import apikey
 from key_config import apisecret
 
 # Binance Futures configuration
-client = Client(apikey, apisecret, testnet=True)
+client = Client(apikey, apisecret)
 
 # Trading parameters
 symbol = 'BTCUSDC'
