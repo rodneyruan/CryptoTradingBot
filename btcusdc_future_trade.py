@@ -4,12 +4,13 @@ import time
 import os
 from datetime import datetime
 import pytz
+from ta.momentum import RSIIndicator
 
 from key_config import apikey
 from key_config import apisecret
 
 # Binance Futures configuration
-client = Client(apikey, apisecret)
+client = Client(apikey, apisecret, testnet=True)
 
 # Trading parameters
 symbol = 'BTCUSDC'
@@ -89,15 +90,9 @@ def calculate_ema(df, period):
     return df['close'].ewm(span=period, adjust=False).mean()
 
 def calculate_rsi(df, period=6):
-    """Calculate RSI for the given period."""
-    delta = df['close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+    """Calculate RSI for the given period using TA library."""
+    rsi_indicator = RSIIndicator(close=df['close'], window=period)
+    return rsi_indicator.rsi()
 
 def is_negative_candle(row):
     """Check if a candle is negative (close < open)."""
@@ -211,7 +206,7 @@ def main():
                     if check_order_status(buy_order['orderId'], symbol):
                         print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Limit buy order filled")
                         break
-                    time.sleep(60)  # Check every 60 seconds
+                    time.sleep(10)  # Check every 10 seconds
                 
                 # If buy order not filled, cancel it and continue
                 if not check_order_status(buy_order['orderId'], symbol):
@@ -268,8 +263,8 @@ def main():
             else:
                 print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | No buy signal. Price: {current_price}, EMA: {latest_ema}, RSI: {latest_rsi}, 3 Neg Candles: {negative_candles_3}, 4 Neg Candles: {negative_candles_4}")
             
-            # Wait 3 minutes
-            time.sleep(3 * 60)
+            # Wait for the next 15-minute candle
+            time.sleep(15 * 60)
         
         except Exception as e:
             print(f"{datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')} | Error: {e}")
