@@ -1,3 +1,5 @@
+# 使用BNB支付手续费可以享受9折优惠。 合约交易账户必须存够足够的BNB才能享受优惠
+# 这个程序会定期检测BNB 的余额，如果不够0.3 BNB，就自动购买BNB 并转入合约账户
 import time
 from binance.client import Client
 from datetime import datetime
