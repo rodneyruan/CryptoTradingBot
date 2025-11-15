@@ -2,7 +2,7 @@ import time
 import pandas as pd
 import threading
 from binance.client import Client
-from binance.streams import ThreadedWebsocketManager
+from binance import ThreadedWebsocketManager
 from ta.momentum import RSIIndicator
 from key_config import apikey, apisecret
 
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     print("WebSocket user data started…")
 
     # Start keep-alive thread
-    threading.Thread(target=keep_alive_listen_key, daemon=True).start()
+    #threading.Thread(target=keep_alive_listen_key, daemon=True).start()
 
     # Main loop
     while True:
