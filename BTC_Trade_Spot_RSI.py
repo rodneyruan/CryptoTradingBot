@@ -33,6 +33,9 @@ total_trades = 0
 successful_trades = 0
 total_profit = 0.0
 
+# Klines history
+klines_history = []
+
 # -----------------------------
 # Telegram notification
 # -----------------------------
@@ -50,6 +53,18 @@ def send_telegram(msg):
 client = Client(apikey, apisecret)
 twm = ThreadedWebsocketManager(api_key=apikey, api_secret=apisecret)
 twm.start()
+
+# -----------------------------
+# Initialize historical klines
+# -----------------------------
+def initialize_klines_history(limit=50):
+    global klines_history
+    try:
+        klines = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_1MINUTE, limit=limit)
+        klines_history = [float(k[4]) for k in klines]  # closing price is index 4
+        print(f"Initialized klines_history with {len(klines_history)} candles")
+    except Exception as e:
+        print(f"Error fetching historical klines: {e}")
 
 # -----------------------------
 # Place TP/SL orders
@@ -139,8 +154,6 @@ def user_data_handler(msg):
 # -----------------------------
 # Kline WebSocket Handler
 # -----------------------------
-klines_history = []
-
 def kline_handler(msg):
     global klines_history, limit_buy_id, position_open, limit_buy_timestamp
 
@@ -200,19 +213,22 @@ def monitor_unfilled_limit_buy():
         time.sleep(5)
 
 # -----------------------------
-# Start WebSockets and threads
+# Start Bot
 # -----------------------------
-twm.start_user_socket(callback=user_data_handler)
-print("WebSocket user data started…")
+if __name__ == "__main__":
+    # Initialize history
+    initialize_klines_history()
 
-twm.start_kline_socket(symbol=symbol.lower(), interval='1m', callback=kline_handler)
-print("Kline WebSocket started…")
+    # Start WebSockets
+    twm.start_user_socket(callback=user_data_handler)
+    twm.start_kline_socket(symbol=symbol.lower(), interval='1m', callback=kline_handler)
+    print("WebSocket started…")
 
-# Start unfilled limit buy monitor thread
-cancel_thread = threading.Thread(target=monitor_unfilled_limit_buy, daemon=True)
-cancel_thread.start()
-print("Unfilled limit buy monitor thread started…")
+    # Start unfilled limit buy monitor thread
+    cancel_thread = threading.Thread(target=monitor_unfilled_limit_buy, daemon=True)
+    cancel_thread.start()
+    print("Unfilled limit buy monitor thread started…")
 
-# Keep main thread alive
-while True:
-    time.sleep(1)
+    # Keep main thread alive
+    while True:
+        time.sleep(1)
