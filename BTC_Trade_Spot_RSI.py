@@ -1,20 +1,16 @@
-#Spot trade: BUY when RSI crosses  above 30
 import time
 import pandas as pd
+import threading
 from binance.client import Client
 from binance.streams import ThreadedWebsocketManager
 from ta.momentum import RSIIndicator
+from key_config import apikey, apisecret
 
 # -----------------------------
-# Binance API keys
+# Binance Spot Configuration
 # -----------------------------
-from key_config import apikey
-from key_config import apisecret
-
-# Binance Futures configuration
 client = Client(apikey, apisecret)
-
-symbol = "BTCFDUSD"
+symbol = "BTCFDUSD"  # Spot symbol
 quantity = 0.001  # BTC to buy
 rsi_period = 6
 rsi_buy = 30
@@ -50,8 +46,8 @@ def get_ohlcv(limit=50):
 def place_tp_sl(entry_price):
     global tp_id, sl_id, total_trades
 
-    tp_price = entry_price * (1 + tp_pct)
-    sl_price = entry_price * (1 - sl_pct)
+    tp_price = round(entry_price * (1 + tp_pct), 2)
+    sl_price = round(entry_price * (1 - sl_pct) * 1.001, 2)  # small buffer
 
     # Take-Profit (limit sell)
     tp_order = client.create_order(
@@ -59,7 +55,7 @@ def place_tp_sl(entry_price):
         side="SELL",
         type="LIMIT",
         quantity=quantity,
-        price=str(round(tp_price, 2)),
+        price=str(tp_price),
         timeInForce="GTC"
     )
     tp_id = tp_order["orderId"]
@@ -70,8 +66,8 @@ def place_tp_sl(entry_price):
         side="SELL",
         type="STOP_LOSS_LIMIT",
         quantity=quantity,
-        price=str(round(sl_price, 2)),  # limit price
-        stopPrice=str(round(sl_price, 2)),  # trigger price
+        price=str(sl_price),
+        stopPrice=str(round(entry_price * (1 - sl_pct), 2)),
         timeInForce="GTC"
     )
     sl_id = sl_order["orderId"]
@@ -119,7 +115,20 @@ def user_data_handler(msg):
 
     # Print statistics
     success_rate = (successful_trades / total_trades * 100) if total_trades > 0 else 0
-    print(f"Total Trades: {total_trades}, Successful Trades: {successful_trades}, Success Rate: {success_rate:.2f}%, Total P/L: {total_profit:.4f} USDT")
+    print(f"Total Trades: {total_trades}, Successful Trades: {successful_trades}, "
+          f"Success Rate: {success_rate:.2f}%, Total P/L: {total_profit:.4f} USDT")
+
+# -----------------------------
+# Keep Listen Key Alive
+# -----------------------------
+def keep_alive_listen_key():
+    while True:
+        try:
+            if twm.is_alive:
+                twm._client.stream_keepalive(twm._listen_key)
+        except Exception as e:
+            print("Listen key keep-alive error:", e)
+        time.sleep(1800)  # every 30 min
 
 # -----------------------------
 # Main Trading Loop
@@ -158,12 +167,17 @@ if __name__ == "__main__":
     twm = ThreadedWebsocketManager(api_key=apikey, api_secret=apisecret)
     twm.start()
 
+    # Start user data WebSocket
     twm.start_user_socket(callback=user_data_handler)
     print("WebSocket user data started…")
 
+    # Start keep-alive thread
+    threading.Thread(target=keep_alive_listen_key, daemon=True).start()
+
+    # Main loop
     while True:
         try:
             check_rsi_and_trade()
         except Exception as e:
             print("Error:", e)
-        time.sleep(60)  # check every 1 min
+        time.sleep(60)
