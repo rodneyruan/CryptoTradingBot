@@ -164,10 +164,11 @@ def place_take_profit(filled_entry_price: float):
 # Manual SL
 # -----------------------------
 def execute_manual_sl(current_price: float):
-    global tp_id, position_open, entry_price, total_profit
+    global tp_id, position_open, entry_price, total_profit, limit_buy_id, limit_buy_timestamp
     try:
         print(f"[SL] Manual SL triggered at {current_price}. Exiting position.")
         send_telegram(f"?? Manual SL triggered at {current_price}. Exiting position.")
+        
         if tp_id:
             try:
                 client.cancel_order(symbol=SYMBOL, orderId=tp_id)
@@ -191,12 +192,13 @@ def execute_manual_sl(current_price: float):
         print(f"[SL] Position closed. P/L: {profit:.8f}")
         send_telegram(f"?? Stop Loss executed at {executed_price}. P/L: {profit:.8f} USDT")
         log_trade("SL", entry_price, executed_price, QUANTITY)
+
     except Exception as e:
         print(f"[SL ERROR] {e}")
         send_telegram(f"? SL execution error: {e}")
     finally:
+        # reset all relevant globals once
         with lock:
-            global limit_buy_id, limit_buy_timestamp, tp_id, entry_price, position_open
             limit_buy_id = None
             limit_buy_timestamp = None
             tp_id = None
