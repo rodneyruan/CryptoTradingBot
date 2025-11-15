@@ -1,29 +1,52 @@
 import pandas as pd
+import time
+import threading
+import requests
 from binance import ThreadedWebsocketManager
+from binance.client import Client
 from ta.momentum import RSIIndicator
 from key_config import apikey, apisecret
 
 # -----------------------------
-# Binance Spot Configuration
+# Configuration
 # -----------------------------
-symbol = "BTCFDUSD"   # Spot symbol
-quantity = 0.001      # BTC to buy
+symbol = "BTCFDUSD"        # Spot symbol
+quantity = 0.001           # BTC to buy
 rsi_period = 6
 rsi_buy = 30
-tp_pct = 0.003        # 0.3%
-sl_pct = 0.01         # 1%
+tp_pct = 0.003             # 0.3%
+sl_pct = 0.01              # 1%
+cancel_after = 10 * 60     # Cancel unfilled limit buy after 10 minutes
+
+# Telegram configuration
+TELEGRAM_TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
 # Global order IDs and stats
 limit_buy_id = None
 tp_id = None
 sl_id = None
 entry_price_global = 0.0
+limit_buy_timestamp = None
+position_open = False
 total_trades = 0
 successful_trades = 0
 total_profit = 0.0
 
-# Initialize Binance client and WebSocket manager
-from binance.client import Client
+# -----------------------------
+# Telegram notification
+# -----------------------------
+def send_telegram(msg):
+    return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+# -----------------------------
+# Binance client and WebSocket
+# -----------------------------
 client = Client(apikey, apisecret)
 twm = ThreadedWebsocketManager(api_key=apikey, api_secret=apisecret)
 twm.start()
@@ -47,6 +70,7 @@ def place_tp_sl(entry_price):
         timeInForce="GTC"
     )
     tp_id = tp_order["orderId"]
+    send_telegram(f"Take Profit order placed at {tp_price}, Order ID: {tp_id}")
 
     # Stop-Loss (STOP-LOSS-LIMIT sell)
     sl_order = client.create_order(
@@ -59,6 +83,7 @@ def place_tp_sl(entry_price):
         timeInForce="GTC"
     )
     sl_id = sl_order["orderId"]
+    send_telegram(f"Stop Loss order placed at {sl_price}, Order ID: {sl_id}")
 
     total_trades += 1
     print(f"Trade #{total_trades} placed: Entry={entry_price}, TP={tp_price}, SL={sl_price}")
@@ -67,7 +92,7 @@ def place_tp_sl(entry_price):
 # User Data Handler
 # -----------------------------
 def user_data_handler(msg):
-    global limit_buy_id, tp_id, sl_id, total_profit, entry_price_global, successful_trades
+    global limit_buy_id, tp_id, sl_id, total_profit, entry_price_global, successful_trades, position_open
 
     if msg["e"] != "executionReport":
         return
@@ -79,6 +104,7 @@ def user_data_handler(msg):
     # Limit Buy filled → place TP/SL
     if order_id == limit_buy_id and status == "FILLED":
         entry_price_global = filled_price
+        send_telegram(f"Limit Buy FILLED at {entry_price_global}, placing TP/SL")
         print(f"Limit Buy filled at {entry_price_global}")
         place_tp_sl(entry_price_global)
 
@@ -87,6 +113,8 @@ def user_data_handler(msg):
         print(f"TP filled at {filled_price} → canceling SL")
         total_profit += (filled_price - entry_price_global) * quantity
         successful_trades += 1
+        position_open = False
+        send_telegram(f"Take Profit FILLED at {filled_price}, profit: {(filled_price - entry_price_global)*quantity:.4f} USDT")
         try:
             client.cancel_order(symbol=symbol, orderId=sl_id)
         except:
@@ -96,6 +124,8 @@ def user_data_handler(msg):
     if order_id == sl_id and status == "FILLED":
         print(f"SL filled at {filled_price} → canceling TP")
         total_profit += (filled_price - entry_price_global) * quantity
+        position_open = False
+        send_telegram(f"Stop Loss FILLED at {filled_price}, loss: {(filled_price - entry_price_global)*quantity:.4f} USDT")
         try:
             client.cancel_order(symbol=symbol, orderId=tp_id)
         except:
@@ -109,23 +139,20 @@ def user_data_handler(msg):
 # -----------------------------
 # Kline WebSocket Handler
 # -----------------------------
-# We'll keep a small history to calculate RSI
 klines_history = []
 
 def kline_handler(msg):
-    global klines_history, limit_buy_id
+    global klines_history, limit_buy_id, position_open, limit_buy_timestamp
 
     k = msg['k']
-    is_closed = k['x']  # True if candle is closed
+    is_closed = k['x']
     close_price = float(k['c'])
 
     if is_closed:
-        # Append closing price to history
         klines_history.append(close_price)
         if len(klines_history) > 50:
             klines_history.pop(0)
 
-        # Calculate RSI if enough data
         if len(klines_history) > rsi_period:
             df = pd.DataFrame({'close': klines_history})
             df['rsi'] = RSIIndicator(df['close'], window=rsi_period).rsi()
@@ -134,11 +161,9 @@ def kline_handler(msg):
 
             print(f"Close Price: {close_price}, RSI: {rsi_now:.2f}")
 
-            # RSI Buy signal
-            if rsi_prev < rsi_buy and rsi_now >= rsi_buy:
+            # RSI Buy signal, only if no active position
+            if rsi_prev < rsi_buy and rsi_now >= rsi_buy and not position_open:
                 print("RSI Buy signal detected!")
-
-                # Place limit buy at current_price - 50
                 buy_price = close_price - 50
                 limit_order = client.create_order(
                     symbol=symbol,
@@ -149,20 +174,45 @@ def kline_handler(msg):
                     timeInForce="GTC"
                 )
                 limit_buy_id = limit_order["orderId"]
-                print(f"Limit Buy order placed at {buy_price}, Order ID: {limit_buy_id}")
+                limit_buy_timestamp = time.time()
+                position_open = True
+                send_telegram(f"Limit Buy placed at {buy_price}, Order ID: {limit_buy_id}")
 
 # -----------------------------
-# Start WebSockets
+# Monitor thread to cancel unfilled limit buy
 # -----------------------------
-# User data for execution reports
+def monitor_unfilled_limit_buy():
+    global limit_buy_id, limit_buy_timestamp, position_open
+    while True:
+        if position_open and limit_buy_id and limit_buy_timestamp:
+            elapsed = time.time() - limit_buy_timestamp
+            if elapsed > cancel_after:
+                try:
+                    client.cancel_order(symbol=symbol, orderId=limit_buy_id)
+                    send_telegram(f"Unfilled limit buy {limit_buy_id} canceled after {cancel_after/60:.0f} minutes")
+                    print(f"Unfilled limit buy {limit_buy_id} canceled")
+                except Exception as e:
+                    print(f"Error canceling limit buy {limit_buy_id}: {e}")
+                finally:
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    position_open = False
+        time.sleep(5)
+
+# -----------------------------
+# Start WebSockets and threads
+# -----------------------------
 twm.start_user_socket(callback=user_data_handler)
 print("WebSocket user data started…")
 
-# Kline stream for 1m candles
 twm.start_kline_socket(symbol=symbol.lower(), interval='1m', callback=kline_handler)
 print("Kline WebSocket started…")
 
+# Start unfilled limit buy monitor thread
+cancel_thread = threading.Thread(target=monitor_unfilled_limit_buy, daemon=True)
+cancel_thread.start()
+print("Unfilled limit buy monitor thread started…")
+
 # Keep main thread alive
-import time
 while True:
     time.sleep(1)
