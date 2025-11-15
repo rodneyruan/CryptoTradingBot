@@ -210,6 +210,7 @@ def execute_manual_sl(current_price: float):
 # -----------------------------
 def user_data_handler(msg):
     global limit_buy_id, limit_buy_timestamp, cancel_event, tp_id, entry_price, position_open, successful_trades, total_profit
+
     try:
         if msg.get("e") != "executionReport":
             return
@@ -220,28 +221,47 @@ def user_data_handler(msg):
         print(f"[USER EVENT] orderId={order_id}, status={status}, lastPrice={last_filled_price}")
 
         with lock:
-            if limit_buy_id is not None and order_id == limit_buy_id and status == "FILLED":
-                entry_price = last_filled_price
-                print(f"[USER EVENT] Limit BUY FILLED at {entry_price} (order {order_id})")
-                send_telegram(f"?? Limit Buy FILLED at {entry_price} (order {order_id})")
-                if cancel_event:
-                    cancel_event.set()
-                limit_buy_id = None
-                limit_buy_timestamp = None
-                place_take_profit(entry_price)
-                position_open = True
+            # Limit BUY filled
+            if limit_buy_id is not None and order_id == limit_buy_id:
+                if status == "FILLED":
+                    entry_price = last_filled_price
+                    print(f"[USER EVENT] Limit BUY FILLED at {entry_price} (order {order_id})")
+                    send_telegram(f"?? Limit Buy FILLED at {entry_price} (order {order_id})")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    place_take_profit(entry_price)
+                    position_open = True
 
-            elif tp_id is not None and order_id == tp_id and status == "FILLED":
-                filled_price = last_filled_price
-                print(f"[USER EVENT] TP FILLED at {filled_price} (order {order_id})")
-                profit = (filled_price - entry_price) * QUANTITY
-                total_profit += profit
-                successful_trades += 1
-                position_open = False
-                send_telegram(f"?? TP FILLED at {filled_price}. Profit: {profit:.8f} USDT")
-                log_trade("TP", entry_price, filled_price, QUANTITY)
-                tp_id = None
-                entry_price = 0.0
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[USER EVENT] Limit BUY {order_id} was {status}. Clearing state.")
+                    send_telegram(f"? Limit Buy {order_id} {status}.")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    position_open = False
+
+            # TP filled or canceled
+            elif tp_id is not None and order_id == tp_id:
+                if status == "FILLED":
+                    filled_price = last_filled_price
+                    print(f"[USER EVENT] TP FILLED at {filled_price} (order {order_id})")
+                    profit = (filled_price - entry_price) * QUANTITY
+                    total_profit += profit
+                    successful_trades += 1
+                    position_open = False
+                    send_telegram(f"?? TP FILLED at {filled_price}. Profit: {profit:.8f} USDT")
+                    log_trade("TP", entry_price, filled_price, QUANTITY)
+                    tp_id = None
+                    entry_price = 0.0
+
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[USER EVENT] TP order {order_id} was {status}. Clearing state.")
+                    send_telegram(f"? TP order {order_id} {status}.")
+                    tp_id = None
+
     except Exception as e:
         print(f"[USER HANDLER ERROR] {e}")
         send_telegram(f"? USER HANDLER ERROR: {e}")
