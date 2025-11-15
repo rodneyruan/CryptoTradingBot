@@ -18,7 +18,7 @@ profit_target = 0.003  # 0.3% profit
 stop_loss_threshold = 0.01  # 1% stop loss
 quantity = 0.01  # Trade size in BTC
 default_limit = 50  # Default limit for get_historical_klines
-tz = pytz.timezone('Asia/Singapore')  # UTC+8 timezone
+tz = pytz.timezone('America/Los_Angeles')  # UTC-8 timezone
 
 def fetch_historical_ohlcv(symbol, timeframe, limit=default_limit):
     """Fetch the most recent historical OHLCV data from Binance Futures."""
