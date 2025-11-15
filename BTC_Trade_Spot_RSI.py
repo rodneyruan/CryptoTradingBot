@@ -208,7 +208,121 @@ def execute_manual_sl(current_price: float):
             tp_id = None
             entry_price = 0.0
             position_open = False
+# -----------------------------
+# User data handler
+# -----------------------------
+def user_data_handler(msg):
+    global limit_buy_id, limit_buy_timestamp, cancel_event, tp_id, entry_price, position_open, successful_trades, total_profit
 
+    try:
+        if msg.get("e") != "executionReport":
+            return
+
+        order_id = int(msg.get("i", 0))
+        status = msg.get("X")
+        last_filled_price = float(msg.get("L", 0)) if msg.get("L") else 0.0
+        print(f"[USER EVENT] orderId={order_id}, status={status}, lastPrice={last_filled_price}")
+
+        with lock:
+            # Limit BUY filled
+            if limit_buy_id is not None and order_id == limit_buy_id:
+                if status == "FILLED":
+                    entry_price = last_filled_price
+                    print(f"[USER EVENT] Limit BUY FILLED at {entry_price} (order {order_id})")
+                    send_telegram(f"?? Limit Buy FILLED at {entry_price} (order {order_id})")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    place_take_profit(entry_price)
+                    position_open = True
+
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[USER EVENT] Limit BUY {order_id} was {status}. Clearing state.")
+                    send_telegram(f"? Limit Buy {order_id} {status}.")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    position_open = False
+
+            # TP filled or canceled
+            elif tp_id is not None and order_id == tp_id:
+                if status == "FILLED":
+                    filled_price = last_filled_price
+                    print(f"[USER EVENT] TP FILLED at {filled_price} (order {order_id})")
+                    profit = (filled_price - entry_price) * QUANTITY
+                    total_profit += profit
+                    successful_trades += 1
+                    position_open = False
+                    send_telegram(f"?? TP FILLED at {filled_price}. Profit: {profit:.8f} USDT")
+                    log_trade("TP", entry_price, filled_price, QUANTITY)
+                    tp_id = None
+                    entry_price = 0.0
+
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[USER EVENT] TP order {order_id} was {status}. Clearing state.")
+                    send_telegram(f"? TP order {order_id} {status}.")
+                    tp_id = None
+
+    except Exception as e:
+        print(f"[USER HANDLER ERROR] {e}")
+        send_telegram(f"? USER HANDLER ERROR: {e}")
+
+# -----------------------------
+# Kline handler
+# -----------------------------
+def kline_handler(msg):
+    global klines_history, limit_buy_id, limit_buy_timestamp, position_open, entry_price, tp_id, cancel_event
+
+    try:
+        k = msg.get('k', {})
+        if not k:
+            return
+        is_closed = k.get('x', False)
+        close_price = float(k.get('c', 0))
+        if not is_closed:
+            return
+
+        klines_history.append(close_price)
+        if len(klines_history) > KL_HISTORY_LIMIT:
+            klines_history.pop(0)
+
+        if len(klines_history) >= RSI_PERIOD + 2:
+            df = pd.DataFrame({'close': klines_history})
+            df['rsi'] = RSIIndicator(df['close'], window=RSI_PERIOD).rsi()
+            rsi_prev = df['rsi'].iloc[-2]
+            rsi_now = df['rsi'].iloc[-1]
+            print(f"[KLINE] Close={close_price:.2f}, RSI_prev={rsi_prev:.2f}, RSI_now={rsi_now:.2f}")
+
+            with lock:
+                if (rsi_prev < RSI_BUY and rsi_now >= RSI_BUY) and not position_open:
+                    buy_price = round(close_price - 50, 2)
+                    try:
+                        print(f"[ORDER] Placing LIMIT BUY at {buy_price}")
+                        send_telegram(f"?? RSI buy signal. Placing LIMIT BUY at {buy_price}")
+                        order = client.create_order(symbol=SYMBOL, side="BUY", type="LIMIT",
+                                                   quantity=QUANTITY, price=str(buy_price), timeInForce="GTC")
+                        limit_buy_id = order.get("orderId")
+                        limit_buy_timestamp = time.time()
+                        position_open = True
+                        print(f"[ORDER] LIMIT BUY placed orderId={limit_buy_id} at {buy_price}")
+                        cancel_event = start_limit_buy_cancel_timer(limit_buy_id, CANCEL_AFTER)
+                    except Exception as e:
+                        print(f"[ORDER ERROR] Failed to place limit buy: {e}")
+                        send_telegram(f"? Failed to place limit buy at {buy_price}: {e}")
+                        limit_buy_id = None
+                        limit_buy_timestamp = None
+                        position_open = False
+
+                if position_open and entry_price > 0:
+                    sl_threshold = entry_price * (1 - SL_PCT)
+                    if close_price <= sl_threshold:
+                        print(f"[SL CHECK] Close {close_price} <= SL threshold {sl_threshold}. Executing manual SL.")
+                        execute_manual_sl(close_price)
+    except Exception as e:
+        print(f"[KLINE HANDLER ERROR] {e}")
+        send_telegram(f"? KLINE HANDLER ERROR: {e}")
 # -----------------------------
 # Flask health endpoint
 # -----------------------------
