@@ -25,7 +25,6 @@ CHAT_ID = "YOUR_CHAT_ID"
 # Global order IDs and stats
 limit_buy_id = None
 tp_id = None
-sl_id = None
 entry_price_global = 0.0
 limit_buy_timestamp = None
 position_open = False
@@ -67,15 +66,11 @@ def initialize_klines_history(limit=50):
         print(f"Error fetching historical klines: {e}")
 
 # -----------------------------
-# Place TP/SL orders
+# Place TP limit sell
 # -----------------------------
-def place_tp_sl(entry_price):
-    global tp_id, sl_id, total_trades
-
+def place_tp(entry_price):
+    global tp_id
     tp_price = round(entry_price * (1 + tp_pct), 2)
-    sl_price = round(entry_price * (1 - sl_pct) * 1.001, 2)  # buffer for spot
-
-    # Take-Profit (limit sell)
     tp_order = client.create_order(
         symbol=symbol,
         side="SELL",
@@ -86,28 +81,13 @@ def place_tp_sl(entry_price):
     )
     tp_id = tp_order["orderId"]
     send_telegram(f"Take Profit order placed at {tp_price}, Order ID: {tp_id}")
-
-    # Stop-Loss (STOP-LOSS-LIMIT sell)
-    sl_order = client.create_order(
-        symbol=symbol,
-        side="SELL",
-        type="STOP_LOSS_LIMIT",
-        quantity=quantity,
-        price=str(sl_price),
-        stopPrice=str(round(entry_price * (1 - sl_pct), 2)),
-        timeInForce="GTC"
-    )
-    sl_id = sl_order["orderId"]
-    send_telegram(f"Stop Loss order placed at {sl_price}, Order ID: {sl_id}")
-
-    total_trades += 1
-    print(f"Trade #{total_trades} placed: Entry={entry_price}, TP={tp_price}, SL={sl_price}")
+    print(f"TP limit sell placed at {tp_price}, Order ID: {tp_id}")
 
 # -----------------------------
 # User Data Handler
 # -----------------------------
 def user_data_handler(msg):
-    global limit_buy_id, tp_id, sl_id, total_profit, entry_price_global, successful_trades, position_open
+    global limit_buy_id, tp_id, total_profit, entry_price_global, successful_trades, position_open
 
     if msg["e"] != "executionReport":
         return
@@ -116,38 +96,25 @@ def user_data_handler(msg):
     status = msg["X"]
     filled_price = float(msg.get("L", 0))
 
-    # Limit Buy filled → place TP/SL
+    # Limit Buy filled → place TP limit sell
     if order_id == limit_buy_id and status == "FILLED":
         entry_price_global = filled_price
-        send_telegram(f"Limit Buy FILLED at {entry_price_global}, placing TP/SL")
+        send_telegram(f"Limit Buy FILLED at {entry_price_global}, placing TP")
         print(f"Limit Buy filled at {entry_price_global}")
-        place_tp_sl(entry_price_global)
+        place_tp(entry_price_global)
 
-    # TP filled → cancel SL
+    # TP filled → close position
     if order_id == tp_id and status == "FILLED":
-        print(f"TP filled at {filled_price} → canceling SL")
+        print(f"TP filled at {filled_price}")
         total_profit += (filled_price - entry_price_global) * quantity
         successful_trades += 1
         position_open = False
         send_telegram(f"Take Profit FILLED at {filled_price}, profit: {(filled_price - entry_price_global)*quantity:.4f} USDT")
-        try:
-            client.cancel_order(symbol=symbol, orderId=sl_id)
-        except:
-            pass
-
-    # SL filled → cancel TP
-    if order_id == sl_id and status == "FILLED":
-        print(f"SL filled at {filled_price} → canceling TP")
-        total_profit += (filled_price - entry_price_global) * quantity
-        position_open = False
-        send_telegram(f"Stop Loss FILLED at {filled_price}, loss: {(filled_price - entry_price_global)*quantity:.4f} USDT")
-        try:
-            client.cancel_order(symbol=symbol, orderId=tp_id)
-        except:
-            pass
+        limit_buy_id = None
+        tp_id = None
 
     # Print statistics
-    success_rate = (successful_trades / total_trades * 100) if total_trades > 0 else 0
+    success_rate = (successful_trades / (successful_trades + (total_trades - successful_trades)) * 100) if total_trades > 0 else 0
     print(f"Total Trades: {total_trades}, Successful Trades: {successful_trades}, "
           f"Success Rate: {success_rate:.2f}%, Total P/L: {total_profit:.4f} USDT")
 
@@ -155,7 +122,7 @@ def user_data_handler(msg):
 # Kline WebSocket Handler
 # -----------------------------
 def kline_handler(msg):
-    global klines_history, limit_buy_id, position_open, limit_buy_timestamp
+    global klines_history, limit_buy_id, position_open, limit_buy_timestamp, entry_price_global, tp_id, total_trades, total_profit
 
     k = msg['k']
     is_closed = k['x']
@@ -166,6 +133,7 @@ def kline_handler(msg):
         if len(klines_history) > 50:
             klines_history.pop(0)
 
+        # RSI calculation
         if len(klines_history) > rsi_period:
             df = pd.DataFrame({'close': klines_history})
             df['rsi'] = RSIIndicator(df['close'], window=rsi_period).rsi()
@@ -189,7 +157,35 @@ def kline_handler(msg):
                 limit_buy_id = limit_order["orderId"]
                 limit_buy_timestamp = time.time()
                 position_open = True
+                total_trades += 1
                 send_telegram(f"Limit Buy placed at {buy_price}, Order ID: {limit_buy_id}")
+
+            # Manual stop-loss monitoring
+            if position_open and entry_price_global > 0:
+                sl_price = entry_price_global * (1 - sl_pct)
+                if close_price <= sl_price:
+                    try:
+                        # Cancel TP
+                        if tp_id:
+                            client.cancel_order(symbol=symbol, orderId=tp_id)
+                        # Sell manually at current price
+                        sell_order = client.create_order(
+                            symbol=symbol,
+                            side="SELL",
+                            type="LIMIT",  # or MARKET if urgent
+                            quantity=quantity,
+                            price=str(round(close_price+50, 2)),
+                            timeInForce="GTC"
+                        )
+                        position_open = False
+                        limit_buy_id = None
+                        tp_id = None
+                        entry_price_global = 0
+                        total_profit += (close_price - entry_price_global) * quantity
+                        send_telegram(f"Stop Loss triggered at {close_price}")
+                        print(f"Stop Loss triggered at {close_price}")
+                    except Exception as e:
+                        print("Error executing stop loss:", e)
 
 # -----------------------------
 # Monitor thread to cancel unfilled limit buy
@@ -216,7 +212,6 @@ def monitor_unfilled_limit_buy():
 # Start Bot
 # -----------------------------
 if __name__ == "__main__":
-    # Initialize history
     initialize_klines_history()
 
     # Start WebSockets
