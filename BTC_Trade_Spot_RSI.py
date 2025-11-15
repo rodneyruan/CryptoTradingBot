@@ -155,7 +155,7 @@ def check_rsi_and_trade():
 # Run WebSocket & Loop
 # -----------------------------
 if __name__ == "__main__":
-    twm = ThreadedWebsocketManager(api_key=API_KEY, api_secret=API_SECRET)
+    twm = ThreadedWebsocketManager(api_key=apikey, api_secret=apisecret)
     twm.start()
 
     twm.start_user_socket(callback=user_data_handler)
