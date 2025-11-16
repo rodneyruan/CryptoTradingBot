@@ -151,14 +151,14 @@ def reconcile_open_orders():
                 limit_buy_timestamp = time.time()
                 position_open = True
                 print(f"[{now_str()}] [RECONCILE] Adopted LIMIT BUY {order_id} at {price}")
-                send_telegram(f"?? Adopted existing LIMIT BUY {order_id} @ {price}")
+                send_telegram(f"Adopted existing LIMIT BUY {order_id} @ {price}")
                 # start cancel timer for this adopted buy
                 start_limit_buy_cancel_timer(limit_buy_id, CANCEL_AFTER)
             elif side == "SELL" and type_ == "LIMIT":
                 tp_id = order_id
                 position_open = True
                 print(f"[{now_str()}] [RECONCILE] Adopted TP SELL {order_id} at {price}")
-                send_telegram(f"?? Adopted existing TP SELL {order_id} @ {price}")
+                send_telegram(f"Adopted existing TP SELL {order_id} @ {price}")
     except Exception as e:
         print(f"[{now_str()}] [RECONCILE ERROR] {e}")
         send_exception_to_telegram(e)
@@ -186,7 +186,7 @@ def start_limit_buy_cancel_timer(order_id: int, timeout_seconds: int):
                 try:
                     print(f"[{now_str()}] [CANCEL-TIMER] Canceling unfilled limit buy {order_id} ...")
                     client.cancel_order(symbol=SYMBOL, orderId=order_id)
-                    send_telegram(f"? Cancelled unfilled limit buy {order_id} after {timeout_seconds//60} minutes")
+                    send_telegram(f" Cancelled unfilled limit buy {order_id} after {timeout_seconds//60} minutes")
                     log_trade("CANCELLED_UNFILLED_BUY", order_id, notes=f"Timed out {timeout_seconds}s")
                 except Exception as e:
                     print(f"[{now_str()}] [CANCEL-TIMER ERROR] {e}")
@@ -221,12 +221,12 @@ def place_take_profit(filled_entry_price: float):
         total_trades += 1
         last_trade = {"type": "TP_PLACED", "order_id": tp_id, "entry": filled_entry_price, "tp": tp_price}
         print(f"[{now_str()}] [TP] TP order placed. orderId={tp_id}, TP={tp_price}")
-        send_telegram(f"? TP placed at {tp_price}, orderId={tp_id}")
+        send_telegram(f" TP placed at {tp_price}, orderId={tp_id}")
         log_trade("TP_PLACED", tp_id, entry=filled_entry_price, exit_price=tp_price, quantity=QUANTITY, profit=0.0, notes="TP placed after buy fill")
     except Exception as e:
         print(f"[{now_str()}] [TP ERROR] Failed to place TP: {e}")
         send_exception_to_telegram(e)
-        send_telegram(f"? Failed to place TP: {e}")
+        send_telegram(f" Failed to place TP: {e}")
 
 # -----------------------------
 # Manual stop-loss execution
@@ -235,7 +235,7 @@ def execute_manual_sl(current_price: float):
     global tp_id, position_open, entry_price, total_profit, last_trade, limit_buy_id, limit_buy_timestamp
     try:
         print(f"[{now_str()}] [SL] Manual SL triggered at {current_price}. Exiting position.")
-        send_telegram(f"?? Manual SL triggered at {current_price}. Exiting position.")
+        send_telegram(f"Manual SL triggered at {current_price}. Exiting position.")
         if tp_id:
             try:
                 client.cancel_order(symbol=SYMBOL, orderId=tp_id)
@@ -256,7 +256,7 @@ def execute_manual_sl(current_price: float):
         profit = (executed_price - entry_price) * QUANTITY
         total_profit += profit
         print(f"[{now_str()}] [SL] Position closed. P/L: {profit:.8f}")
-        send_telegram(f"?? Stop Loss executed at {executed_price}. P/L: {profit:.8f} USDT")
+        send_telegram(f"Stop Loss executed at {executed_price}. P/L: {profit:.8f} USDT")
         log_trade("SL", None, entry=entry_price, exit_price=executed_price, quantity=QUANTITY, profit=profit, notes="Manual SL")
         last_trade = {"type": "SL", "entry": entry_price, "exit": executed_price, "profit": profit}
     except Exception as e:
@@ -290,7 +290,7 @@ def user_data_handler(msg):
                 if status == "FILLED":
                     entry_price = last_filled_price
                     print(f"[{now_str()}] [USER EVENT] Limit BUY FILLED at {entry_price} (order {order_id})")
-                    send_telegram(f"?? Limit Buy FILLED at {entry_price} (order {order_id})")
+                    send_telegram(f"Limit Buy FILLED at {entry_price} (order {order_id})")
                     if cancel_event:
                         cancel_event.set()
                     limit_buy_id = None
@@ -301,7 +301,7 @@ def user_data_handler(msg):
                     log_trade("BUY_FILLED", order_id, entry=entry_price, exit_price=0.0, quantity=QUANTITY, profit=0.0, notes="Limit buy filled")
                 elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
                     print(f"[{now_str()}] [USER EVENT] Limit BUY {order_id} was {status}. Clearing state.")
-                    send_telegram(f"?? Limit Buy {order_id} {status}.")
+                    send_telegram(f"Limit Buy {order_id} {status}.")
                     if cancel_event:
                         cancel_event.set()
                     limit_buy_id = None
@@ -318,14 +318,14 @@ def user_data_handler(msg):
                     successful_trades += 1
                     position_open = False
                     print(f"[{now_str()}] [USER EVENT] TP FILLED at {filled_price} (order {order_id})")
-                    send_telegram(f"?? TP FILLED at {filled_price}. Profit: {profit:.8f} USDT")
+                    send_telegram(f"TP FILLED at {filled_price}. Profit: {profit:.8f} USDT")
                     log_trade("TP", order_id, entry=entry_price, exit_price=filled_price, quantity=QUANTITY, profit=profit, notes="TP hit")
                     last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
                     tp_id = None
                     entry_price = 0.0
                 elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
                     print(f"[{now_str()}] [USER EVENT] TP order {order_id} was {status}. Clearing state.")
-                    send_telegram(f"?? TP order {order_id} {status}.")
+                    send_telegram(f"TP order {order_id} {status}.")
                     tp_id = None
                     log_trade("TP_CANCELLED", order_id, notes=f"TP {status}")
     except Exception as e:
@@ -382,7 +382,7 @@ def kline_handler(msg):
                         buy_price = round(close_price - 30, 2)
                         try:
                             print(f"[{now_str()}] [ORDER] {buy_reason}: Placing LIMIT BUY at {buy_price}")
-                            send_telegram(f"?? BUY SIGNAL: {buy_reason}. Placing LIMIT BUY at {buy_price}")
+                            send_telegram(f"BUY SIGNAL: {buy_reason}. Placing LIMIT BUY at {buy_price}")
 
                             order = client.create_order(
                                 symbol=SYMBOL,
