@@ -9,7 +9,7 @@ from key_config import apikey
 from key_config import apisecret
 
 # Binance Futures configuration
-client = Client(apikey, apisecret, testnet=True)
+client = Client(apikey, apisecret)
 
 # Trading parameters
 symbol = 'BTCFDUSD'
@@ -19,7 +19,7 @@ rsi_period = 6
 profit_target = 0.002         # 0.3%
 stop_loss_threshold = 0.006   # 1%
 quantity = 0.01
-default_limit = 500
+default_limit = 1500
 tz = pytz.timezone('America/Los_Angeles')
 
 
