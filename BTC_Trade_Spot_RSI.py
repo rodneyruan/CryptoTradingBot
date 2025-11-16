@@ -332,67 +332,98 @@ def user_data_handler(msg):
         print(f"[{now_str()}] [USER HANDLER ERROR] {e}")
         send_exception_to_telegram(e)
 
-# -----------------------------
-# Kline handler (on closed 5m candles)
-# -----------------------------
 def kline_handler(msg):
     global klines_history, limit_buy_id, limit_buy_timestamp, position_open, entry_price, tp_id, cancel_event
     try:
         k = msg.get('k', {})
         if not k:
             return
+
         is_closed = k.get('x', False)
         close_price = float(k.get('c', 0))
+        open_price = float(k.get('o', 0))
+
         if not is_closed:
             return
 
-        # append close
+        # Append closed candle price
         klines_history.append(close_price)
         if len(klines_history) > KL_HISTORY_LIMIT:
             klines_history.pop(0)
 
-        # compute RSI when enough data
-        if len(klines_history) >= RSI_PERIOD + 2:
+        # Need at least RSI computation window + 3
+        if len(klines_history) >= RSI_PERIOD + 3:
+
             df = pd.DataFrame({'close': klines_history})
             df['rsi'] = RSIIndicator(df['close'], window=RSI_PERIOD).rsi()
-            rsi_prev = df['rsi'].iloc[-2]
-            rsi_now = df['rsi'].iloc[-1]
-            print(f"[{now_str()}] [KLINE] Close={close_price:.2f}, RSI_prev={rsi_prev:.2f}, RSI_now={rsi_now:.2f}")
 
-            with lock:
-                # Entry condition: RSI crosses up 30 and no active position
-                if (rsi_prev < RSI_BUY and rsi_now >= RSI_BUY) and not position_open:
-                    buy_price = round(close_price - 50, 2)
-                    try:
-                        print(f"[{now_str()}] [ORDER] Placing LIMIT BUY at {buy_price} (close {close_price})")
-                        send_telegram(f"?? RSI(14) buy signal. Placing LIMIT BUY at {buy_price}")
-                        order = client.create_order(symbol=SYMBOL, side="BUY", type="LIMIT",
-                                                   quantity=QUANTITY, price=str(buy_price), timeInForce="GTC")
-                        limit_buy_id = order.get("orderId")
-                        limit_buy_timestamp = time.time()
-                        position_open = True  # we have an outstanding buy
-                        print(f"[{now_str()}] [ORDER] LIMIT BUY placed orderId={limit_buy_id} at {buy_price}")
-                        log_trade("BUY_PLACED", limit_buy_id, entry=buy_price, exit=0.0, quantity=QUANTITY, profit=0.0, notes="Limit buy placed on RSI signal")
-                        # start cancel timer for this buy
-                        start_limit_buy_cancel_timer(limit_buy_id, CANCEL_AFTER)
-                    except Exception as e:
-                        print(f"[{now_str()}] [ORDER ERROR] Failed to place limit buy: {e}")
-                        send_exception_to_telegram(e)
-                        send_telegram(f"? Failed to place limit buy at {buy_price}: {e}")
-                        # reset
-                        limit_buy_id = None
-                        limit_buy_timestamp = None
-                        position_open = False
+            rsi_prev2 = df['rsi'].iloc[-3]
+            rsi_prev1 = df['rsi'].iloc[-2]
+            rsi_now   = df['rsi'].iloc[-1]
 
-                # Manual SL check once position is actually open (entry_price > 0)
-                if position_open and entry_price > 0:
-                    sl_threshold = entry_price * (1 - SL_PCT)
-                    if close_price <= sl_threshold:
-                        print(f"[{now_str()}] [SL CHECK] Close {close_price} <= SL threshold {sl_threshold}. Executing manual SL.")
-                        execute_manual_sl(close_price)
+            print(f"[{now_str()}] [KLINE] Close={close_price:.2f}, "
+                  f"RSI_prev2={rsi_prev2:.2f}, RSI_prev1={rsi_prev1:.2f}, RSI_now={rsi_now:.2f}")
+
+            # ============================================================
+            # STRICT BUY CONDITIONS (ALL MUST MATCH)
+            # ============================================================
+            cond1 = (rsi_now < 40)
+            cond2 = (close_price > open_price)
+            cond3 = (rsi_prev2 < 30 and rsi_prev1 < 30)
+            cond4 = (rsi_prev1 < 30 and rsi_now >= 30)
+
+            buy_signal = cond1 and cond2 and cond3 and cond4
+
+            if buy_signal:
+                buy_reason = "RSI oversold reversal + green candle)"
+
+                with lock:
+                    if not position_open:
+                        buy_price = round(close_price - 50, 2)
+                        try:
+                            print(f"[{now_str()}] [ORDER] {buy_reason}: Placing LIMIT BUY at {buy_price}")
+                            send_telegram(f"?? BUY SIGNAL: {buy_reason}. Placing LIMIT BUY at {buy_price}")
+
+                            order = client.create_order(
+                                symbol=SYMBOL,
+                                side="BUY",
+                                type="LIMIT",
+                                quantity=QUANTITY,
+                                price=str(buy_price),
+                                timeInForce="GTC"
+                            )
+
+                            limit_buy_id = order.get("orderId")
+                            limit_buy_timestamp = time.time()
+                            position_open = True
+
+                            print(f"[{now_str()}] [ORDER] LIMIT BUY placed orderId={limit_buy_id} at {buy_price}")
+                            log_trade("BUY_PLACED", limit_buy_id, entry=buy_price, exit=0.0,
+                                      quantity=QUANTITY, profit=0.0,
+                                      notes=buy_reason)
+
+                            start_limit_buy_cancel_timer(limit_buy_id, CANCEL_AFTER)
+
+                        except Exception as e:
+                            print(f"[{now_str()}] [ORDER ERROR] Failed to place limit buy: {e}")
+                            send_exception_to_telegram(e)
+                            limit_buy_id = None
+                            limit_buy_timestamp = None
+                            position_open = False
+
+            # ============================================================
+            # SL check
+            # ============================================================
+            if position_open and entry_price > 0:
+                sl_trigger = entry_price * (1 - SL_PCT)
+                if close_price <= sl_trigger:
+                    print(f"[{now_str()}] [SL] Close {close_price} <= {sl_trigger}. Triggering manual SL.")
+                    execute_manual_sl(close_price)
+
     except Exception as e:
-        print(f"[{now_str()}] [KLINE HANDLER ERROR] {e}")
+        print(f"[{now_str()}] [KLINE ERROR] {e}")
         send_exception_to_telegram(e)
+
 
 # -----------------------------
 # Flask /health endpoint
