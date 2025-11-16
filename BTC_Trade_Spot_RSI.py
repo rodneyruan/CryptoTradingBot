@@ -249,7 +249,7 @@ def execute_manual_sl(current_price: float):
             executed_price = float(fills[0]["price"]) if fills else current_price
             print(f"[{now_str()}] [SL] MARKET sell executed at {executed_price}")
         else:
-            executed_price = round(current_price, 2)
+            executed_price = round(current_price+20, 2)
             sell = client.create_order(symbol=SYMBOL, side="SELL", type="LIMIT", quantity=QUANTITY, price=str(executed_price), timeInForce="GTC")
             print(f"[{now_str()}] [SL] LIMIT sell order placed: {sell}")
 
@@ -379,7 +379,7 @@ def kline_handler(msg):
 
                 with lock:
                     if not position_open:
-                        buy_price = round(close_price - 50, 2)
+                        buy_price = round(close_price - 30, 2)
                         try:
                             print(f"[{now_str()}] [ORDER] {buy_reason}: Placing LIMIT BUY at {buy_price}")
                             send_telegram(f"?? BUY SIGNAL: {buy_reason}. Placing LIMIT BUY at {buy_price}")
@@ -455,7 +455,7 @@ def start_flask():
 def start_bot():
     print(f"[{now_str()}] [BOT] Initializing...")
     initialize_klines_history(limit=KL_HISTORY_LIMIT)
-    reconcile_open_orders()
+    #reconcile_open_orders()
 
     # start Flask in separate thread
     flask_thread = threading.Thread(target=start_flask, daemon=True)
