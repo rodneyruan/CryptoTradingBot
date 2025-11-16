@@ -12,13 +12,14 @@ from key_config import apisecret
 client = Client(apikey, apisecret, testnet=True)
 
 # Trading parameters
-symbol = 'BTCUSDC'
-timeframe = Client.KLINE_INTERVAL_15MINUTE
+symbol = 'BTCFDUSD'
+timeframe = Client.KLINE_INTERVAL_1MINUTE
 ema_period = 7
-profit_target = 0.003         # 0.3%
-stop_loss_threshold = 0.01    # 1%
+rsi_period = 6
+profit_target = 0.002         # 0.3%
+stop_loss_threshold = 0.006   # 1%
 quantity = 0.01
-default_limit = 50
+default_limit = 500
 tz = pytz.timezone('America/Los_Angeles')
 
 
@@ -59,14 +60,14 @@ def backtest():
     df['ema'] = calculate_ema(df, ema_period)
 
     # ⭐ RSI using ta library
-    df["rsi"] = RSIIndicator(close=df["close"], window=14).rsi()
+    df["rsi"] = RSIIndicator(close=df["close"], window=rsi_period).rsi()
 
     total_profit = 0.0
     successful_trades = 0
     total_trades = 0
 
     # Starting point after indicators valid
-    i = max(ema_period, 14) + 2
+    i = max(ema_period, rsi_period) + 2
 
     while i < len(df) - 1:
         current_price = df['close'].iloc[i]
