@@ -114,7 +114,7 @@ def log_trade(event, order_id=None, entry=0.0, exit_price=0.0, quantity=0.0, pro
     with open(LOG_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([ts, event, order_id or "", f"{entry:.8f}" if entry else "", f"{exit_price:.8f}" if exit_price else "", f"{quantity:.8f}" if quantity else "", f"{profit:.8f}" if profit else "", notes])
-    print(f"[{ts}] [LOG] {event} order={order_id} entry={entry} exit={exit_price} profit={profit} notes={notes}")
+    print(f"[{ts}] [LOG] {event} order={order_id} entry={entry} exit_price={exit_price} profit={profit} notes={notes}")
 
 # -----------------------------
 # Initialize klines (fetch batch history)
@@ -222,7 +222,7 @@ def place_take_profit(filled_entry_price: float):
         last_trade = {"type": "TP_PLACED", "order_id": tp_id, "entry": filled_entry_price, "tp": tp_price}
         print(f"[{now_str()}] [TP] TP order placed. orderId={tp_id}, TP={tp_price}")
         send_telegram(f"? TP placed at {tp_price}, orderId={tp_id}")
-        log_trade("TP_PLACED", tp_id, entry=filled_entry_price, exit=tp_price, quantity=QUANTITY, profit=0.0, notes="TP placed after buy fill")
+        log_trade("TP_PLACED", tp_id, entry=filled_entry_price, exit_price=tp_price, quantity=QUANTITY, profit=0.0, notes="TP placed after buy fill")
     except Exception as e:
         print(f"[{now_str()}] [TP ERROR] Failed to place TP: {e}")
         send_exception_to_telegram(e)
@@ -257,7 +257,7 @@ def execute_manual_sl(current_price: float):
         total_profit += profit
         print(f"[{now_str()}] [SL] Position closed. P/L: {profit:.8f}")
         send_telegram(f"?? Stop Loss executed at {executed_price}. P/L: {profit:.8f} USDT")
-        log_trade("SL", None, entry=entry_price, exit=executed_price, quantity=QUANTITY, profit=profit, notes="Manual SL")
+        log_trade("SL", None, entry=entry_price, exit_price=executed_price, quantity=QUANTITY, profit=profit, notes="Manual SL")
         last_trade = {"type": "SL", "entry": entry_price, "exit": executed_price, "profit": profit}
     except Exception as e:
         print(f"[{now_str()}] [SL ERROR] {e}")
@@ -298,7 +298,7 @@ def user_data_handler(msg):
                     place_take_profit(entry_price)
                     position_open = True
                     last_trade = {"type": "BUY_FILLED", "order_id": order_id, "entry": entry_price}
-                    log_trade("BUY_FILLED", order_id, entry=entry_price, exit=0.0, quantity=QUANTITY, profit=0.0, notes="Limit buy filled")
+                    log_trade("BUY_FILLED", order_id, entry=entry_price, exit_price=0.0, quantity=QUANTITY, profit=0.0, notes="Limit buy filled")
                 elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
                     print(f"[{now_str()}] [USER EVENT] Limit BUY {order_id} was {status}. Clearing state.")
                     send_telegram(f"?? Limit Buy {order_id} {status}.")
@@ -319,7 +319,7 @@ def user_data_handler(msg):
                     position_open = False
                     print(f"[{now_str()}] [USER EVENT] TP FILLED at {filled_price} (order {order_id})")
                     send_telegram(f"?? TP FILLED at {filled_price}. Profit: {profit:.8f} USDT")
-                    log_trade("TP", order_id, entry=entry_price, exit=filled_price, quantity=QUANTITY, profit=profit, notes="TP hit")
+                    log_trade("TP", order_id, entry=entry_price, exit_price=filled_price, quantity=QUANTITY, profit=profit, notes="TP hit")
                     last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
                     tp_id = None
                     entry_price = 0.0
@@ -398,7 +398,7 @@ def kline_handler(msg):
                             position_open = True
 
                             print(f"[{now_str()}] [ORDER] LIMIT BUY placed orderId={limit_buy_id} at {buy_price}")
-                            log_trade("BUY_PLACED", limit_buy_id, entry=buy_price, exit=0.0,
+                            log_trade("BUY_PLACED", limit_buy_id, entry=buy_price, exit_price=0.0,
                                       quantity=QUANTITY, profit=0.0,
                                       notes=buy_reason)
 
