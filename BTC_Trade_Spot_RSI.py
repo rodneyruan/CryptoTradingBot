@@ -33,11 +33,11 @@ from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 # USER CONFIG (5-minute strategy)
 # -----------------------------
 SYMBOL = "BTCFDUSD"      # Spot symbol
-QUANTITY = 0.001         # BTC to buy
+QUANTITY = 0.01         # BTC to buy
 TIMEFRAME = "5m"         # 5-minute timeframe
 RSI_PERIOD = 14
 RSI_BUY = 30
-TP_PCT = 0.006           # 0.6% TP
+TP_PCT = 0.003           # 0.3% TP
 SL_PCT = 0.01            # 1.0% SL
 CANCEL_AFTER = 10 * 60   # cancel unfilled limit buy after 10 minutes
 USE_MARKET_ON_SL = True  # execute MARKET sell on SL
