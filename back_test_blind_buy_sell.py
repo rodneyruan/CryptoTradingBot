@@ -1,4 +1,4 @@
-from binance.client import Client  
+from binance.client import Client
 import pandas as pd
 import pytz
 from datetime import datetime
@@ -15,9 +15,12 @@ default_limit = 1500
 tz = pytz.timezone("America/Los_Angeles")
 
 # Profit/SL logic
-BUY_DISCOUNT = 0.9985    # Buy 0.15% below price
-TP_MULTIPLIER = 1.0015   # Sell 0.15% above buy price
-SL_MULTIPLIER = 0.99     # Stop loss -1%
+BUY_DISCOUNT = 0.9980      # Buy 0.20% below current close price
+TP_MULTIPLIER = 1.0015     # +0.15%
+SL_MULTIPLIER = 0.99       # -1%
+
+# Order valid for 10 candles = 30 minutes
+ORDER_EXPIRATION = 10
 
 
 def fetch_historical_ohlcv(symbol, timeframe, limit=default_limit):
@@ -47,74 +50,93 @@ def backtest():
         print("No data. Exiting.")
         return
 
-    total_profit = 0.0
+    total_profit = 0
     successful_trades = 0
     total_trades = 0
 
-    i = 3  # small buffer for safety
+    i = 3  # buffer
 
-    while i < len(df) - 1:
+    while i < len(df) - ORDER_EXPIRATION - 1:
 
-        close_price = df["close"].iloc[i]
-        open_price  = df["open"].iloc[i]
-        ts = df["timestamp"].iloc[i].tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
+        # Start by placing a fresh limit buy
+        attempt_index = i
+        close_price = df["close"].iloc[attempt_index]
+        ts = df["timestamp"].iloc[attempt_index].tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
 
-        print(f"{ts} | Close={close_price:.2f}")
+        limit_buy_price = close_price * BUY_DISCOUNT
+        tp_price = limit_buy_price * TP_MULTIPLIER
+        sl_price = limit_buy_price * SL_MULTIPLIER
+
+        print(
+            f"\nPLACED LIMIT BUY 🔔 | {ts}\n"
+            f"  Limit Buy @ {limit_buy_price:.2f} (-0.20%)\n"
+            f"  Expires in 10 candles\n"
+            f"  TP = {tp_price:.2f} (+0.15%)\n"
+            f"  SL = {sl_price:.2f} (-1%)\n"
+        )
+
+        buy_filled = False
 
         # ------------------------------------------------------------
-        # BUY CONDITION (ONLY ONE NOW)
+        # Check the next 10 candles for a buy fill
         # ------------------------------------------------------------
-        buy_signal = (close_price > open_price)   # green candle
+        expiration_index = attempt_index + ORDER_EXPIRATION
 
-        if buy_signal:
+        for j in range(attempt_index + 1, expiration_index + 1):
 
-            buy_price = close_price * BUY_DISCOUNT
-            tp_price  = buy_price * TP_MULTIPLIER
-            sl_price  = buy_price * SL_MULTIPLIER
+            low_ = df["low"].iloc[j]
+            ts_j = df["timestamp"].iloc[j].tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
 
-            total_trades += 1
+            if low_ <= limit_buy_price:
+                buy_filled = True
+                fill_index = j
 
-            print(
-                f"\nBUY SIGNAL 🔔 | {ts}\n"
-                f"  Limit Buy @ {buy_price:.2f} (-0.15%)\n"
-                f"  TP = {tp_price:.2f} (+0.15%)\n"
-                f"  SL = {sl_price:.2f} (-1%)\n"
-            )
-
-            trade_closed = False
-
-            # simulate future candles
-            for j in range(i + 1, len(df)):
-
-                high_ = df["high"].iloc[j]
-                low_  = df["low"].iloc[j]
-
-                ts_j = df["timestamp"].iloc[j].tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
-
-                # Take profit hit
-                if high_ >= tp_price:
-                    profit = (tp_price - buy_price) * quantity
-                    total_profit += profit
-                    successful_trades += 1
-
-                    print(f"TP HIT ✔ | {ts_j} | Profit: {profit:.4f} USDC\n")
-                    i = j
-                    trade_closed = True
-                    break
-
-                # Stop loss hit
-                if low_ <= sl_price:
-                    profit = (sl_price - buy_price) * quantity
-                    total_profit += profit
-
-                    print(f"STOP LOSS ❌ | {ts_j} | Loss: {profit:.4f} USDC\n")
-                    i = j
-                    trade_closed = True
-                    break
-
-            if not trade_closed:
-                print("Trade left open. End of data.\n")
+                print(f"BUY FILLED ✔ | {ts_j} | Fill Price: {limit_buy_price:.2f}")
+                total_trades += 1
                 break
+
+        # ------------------------------------------------------------
+        # If NOT filled after 10 candles → expire the order
+        # ------------------------------------------------------------
+        if not buy_filled:
+            print("❌ Buy order EXPIRED after 10 candles. Placing a NEW limit buy at new price.\n")
+            i = expiration_index   # Move pointer to expiration candle
+            continue  # Restart with a new buy order at the expiration candle price
+
+        # ------------------------------------------------------------
+        # Step 2: After fill, check TP or SL
+        # ------------------------------------------------------------
+        trade_closed = False
+
+        for k in range(fill_index + 1, len(df)):
+            high2 = df["high"].iloc[k]
+            low2  = df["low"].iloc[k]
+            ts_k  = df["timestamp"].iloc[k].tz_convert(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+            # TP FIRST
+            if high2 >= tp_price:
+                profit = (tp_price - limit_buy_price) * quantity
+                total_profit += profit
+                successful_trades += 1
+
+                print(f"TP HIT ✔ | {ts_k} | Profit: {profit:.4f} USDC\n")
+                i = k
+                trade_closed = True
+                break
+
+            # SL SECOND
+            if low2 <= sl_price:
+                profit = (sl_price - limit_buy_price) * quantity
+                total_profit += profit
+
+                print(f"STOP LOSS ❌ | {ts_k} | Loss: {profit:.4f} USDC\n")
+                i = k
+                trade_closed = True
+                break
+
+        if not trade_closed:
+            print("Trade open at end of data. Stopping.\n")
+            break
 
         i += 1
 
