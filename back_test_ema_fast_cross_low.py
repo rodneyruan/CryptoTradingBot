@@ -10,7 +10,7 @@ client = Client(apikey, apisecret)
 
 # Config
 symbol = "BTCFDUSD"
-timeframe = Client.KLINE_INTERVAL_15MINUTE
+timeframe = Client.KLINE_INTERVAL_5MINUTE
 quantity = 0.01
 BUY_DISCOUNT = 0.9980
 TP_MULTIPLIER = 1.0015
@@ -23,6 +23,7 @@ EMA_FAST_PERIOD = 9
 EMA_SLOW_PERIOD = 21
 EMA_TREND_PERIOD = 200
 
+DAYS_BACK=30
 
 def fetch_historical_ohlcv(symbol, timeframe, days_back=30):
     all_klines = []
@@ -63,7 +64,7 @@ def compute_ema(df, period):
 
 
 def backtest():
-    df = fetch_historical_ohlcv(symbol, timeframe, days_back=30)
+    df = fetch_historical_ohlcv(symbol, timeframe, days_back=DAYS_BACK)
     if df.empty:
         print("No data. Exiting.")
         return
@@ -81,6 +82,7 @@ def backtest():
 
     while i < len(df) - ORDER_EXPIRATION - 1:
         close_price = df["close"].iloc[i]
+        open_price = df["open"].iloc[i]
         ts = df["timestamp"].iloc[i].strftime("%Y-%m-%d %H:%M:%S")
 
         # EMA crossover buy condition
@@ -92,6 +94,7 @@ def backtest():
 
         cond1 = (ema_fast_prev < ema_slow_prev) and (ema_fast_now >= ema_slow_now)
         cond2 = (close_price > ema_trend_now)
+        cond3 = (close_price > open_price)
 
         buy_signal = cond1 and cond2
 
@@ -105,7 +108,7 @@ def backtest():
         sl_price = limit_buy_price * SL_MULTIPLIER
 
         print(
-            f"\nEMA BUY SIGNAL 🔔 | {ts}\n"
+            f"\nEMA BUY SIGNAL ?? | {ts}\n"
             f"  Limit Buy @ {limit_buy_price:.2f}\n"
             f"  TP = {tp_price:.2f}\n"
             f"  SL = {sl_price:.2f}\n"
@@ -121,12 +124,12 @@ def backtest():
             if low_ <= limit_buy_price:
                 buy_filled = True
                 fill_index = j
-                print(f"BUY FILLED ✔ | {ts_j} | Price: {limit_buy_price:.2f}")
+                print(f"BUY FILLED ? | {ts_j} | Price: {limit_buy_price:.2f}")
                 total_trades += 1
                 break
 
         if not buy_filled:
-            print("❌ Buy order expired. Restarting at new price.\n")
+            print("? Buy order expired. Restarting at new price.\n")
             i = expiration_index
             continue
 
@@ -141,7 +144,7 @@ def backtest():
                 profit = (tp_price - limit_buy_price) * quantity
                 total_profit += profit
                 successful_trades += 1
-                print(f"TP HIT ✔ | {ts_k} | Profit: {profit:.4f} USDC\n")
+                print(f"TP HIT ? | {ts_k} | Profit: {profit:.4f} USDC\n")
                 i = k
                 trade_closed = True
                 break
@@ -149,7 +152,7 @@ def backtest():
             if low2 <= sl_price:
                 profit = (sl_price - limit_buy_price) * quantity
                 total_profit += profit
-                print(f"STOP LOSS ❌ | {ts_k} | Loss: {profit:.4f} USDC\n")
+                print(f"STOP LOSS ? | {ts_k} | Loss: {profit:.4f} USDC\n")
                 i = k
                 trade_closed = True
                 break
