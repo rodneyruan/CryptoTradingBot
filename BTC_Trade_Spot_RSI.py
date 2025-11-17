@@ -1,174 +1,492 @@
-from binance.client import Client
-import pandas as pd
-import pytz
-from datetime import datetime, timedelta
+#!/usr/bin/env python3
+"""
+Spot RSI WebSocket Bot (5m)
+ - Limit Buy at close-50 when RSI(14) crosses above 30
+ - TP placed after buy fills (limit sell)
+ - Manual SL monitored via candle closes (market sell by default)
+ - Cancel unfilled limit buy after CANCEL_AFTER seconds
+ - Telegram notifications
+ - CSV trade logging
+ - Debug prints for each transaction
+ - Flask /health endpoint
+"""
+
 import time
+import threading
+import requests
+import pandas as pd
+import csv
+import traceback
+import sys
+from datetime import datetime
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
+from flask import Flask, jsonify
+from binance import ThreadedWebsocketManager
+from binance.client import Client
+from ta.momentum import RSIIndicator
+from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 
-from key_config import apikey, apisecret
-
-client = Client(apikey, apisecret)
-
-# Config
-symbol = "BTCFDUSD"
-timeframe = Client.KLINE_INTERVAL_15MINUTE
-quantity = 0.01
-BUY_DISCOUNT = 0.99950
-TP_MULTIPLIER = 1.003
-SL_MULTIPLIER = 0.99
-ORDER_EXPIRATION = 10
+# -----------------------------
+# USER CONFIG (5-minute strategy)
+# -----------------------------
+SYMBOL = "BTCFDUSD"      # Spot symbol
+QUANTITY = 0.01         # BTC to buy
+TIMEFRAME = "5m"         # 5-minute timeframe
 RSI_PERIOD = 14
-RSI_OVERSOLD = 30
-tz = pytz.timezone("America/Los_Angeles")
-MAX_LIMIT = 1000
+RSI_BUY = 30
+TP_PCT = 0.003           # 0.3% TP
+SL_PCT = 0.01            # 1.0% SL
+CANCEL_AFTER = 10 * 60   # cancel unfilled limit buy after 10 minutes
+USE_MARKET_ON_SL = True  # execute MARKET sell on SL
+KL_HISTORY_LIMIT = 200   # how many historical klines to fetch at startup
 
+LOG_FILE = "trade_log.csv"
+LOCAL_TZ = "America/Los_Angeles"  # for readable timestamps
 
-def fetch_historical_ohlcv(symbol, timeframe, days_back=30):
-    all_klines = []
-    end_time = int(time.time() * 1000)
-    start_time = end_time - days_back * 24 * 60 * 60 * 1000
+# -----------------------------
+# GLOBAL STATE
+# -----------------------------
+client = Client(apikey, apisecret)
+twm = ThreadedWebsocketManager(api_key=apikey, api_secret=apisecret)
 
-    while start_time < end_time:
-        klines = client.get_historical_klines(
-            symbol=symbol,
-            interval=timeframe,
-            start_str=start_time,
-            end_str=end_time,
-            limit=MAX_LIMIT
+# order / position tracking
+limit_buy_id = None
+limit_buy_timestamp = None
+cancel_event = None
+tp_id = None
+entry_price = 0.0
+position_open = False  # True if we have an open position or outstanding buy
+total_trades = 0
+successful_trades = 0
+total_profit = 0.0
+last_trade = None  # store last trade info dict
+
+# kline history for RSI
+klines_history = []
+
+# sync lock
+lock = threading.Lock()
+
+# Flask app
+app = Flask(__name__)
+
+# -----------------------------
+# Utilities
+# -----------------------------
+def now_str():
+    """Return timestamp string in local timezone (LA) if available, else local system time."""
+    if ZoneInfo is not None:
+        return datetime.now(ZoneInfo(LOCAL_TZ)).strftime("%Y-%m-%d %H:%M:%S %Z")
+    else:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def send_telegram(msg: str):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+    except Exception as e:
+        print(f"[{now_str()}] [TELEGRAM ERROR] {e}")
+
+def send_exception_to_telegram(exc: BaseException):
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    payload = f"?? <b>Bot Exception</b>\n<pre>{text}</pre>"
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": payload, "parse_mode": "HTML"}, timeout=10)
+    except Exception as e:
+        print(f"[{now_str()}] [TELEGRAM ERROR] failed to send exception: {e}")
+
+# -----------------------------
+# CSV Logging
+# -----------------------------
+try:
+    with open(LOG_FILE, "x", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Timestamp", "Event", "OrderID", "EntryPrice", "ExitPrice", "Quantity", "P/L", "Notes"])
+except FileExistsError:
+    pass
+
+def log_trade(event, order_id=None, entry=0.0, exit_price=0.0, quantity=0.0, profit=0.0, notes=""):
+    ts = now_str()
+    with open(LOG_FILE, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([ts, event, order_id or "", f"{entry:.8f}" if entry else "", f"{exit_price:.8f}" if exit_price else "", f"{quantity:.8f}" if quantity else "", f"{profit:.8f}" if profit else "", notes])
+    print(f"[{ts}] [LOG] {event} order={order_id} entry={entry} exit_price={exit_price} profit={profit} notes={notes}")
+
+# -----------------------------
+# Initialize klines (fetch batch history)
+# -----------------------------
+def initialize_klines_history(limit=KL_HISTORY_LIMIT):
+    global klines_history
+    try:
+        print(f"[{now_str()}] [INIT] Fetching {limit} historical {TIMEFRAME} klines...")
+        # use Client.KLINE_INTERVAL_5MINUTE for 5m
+        interval = Client.KLINE_INTERVAL_5MINUTE if TIMEFRAME == "5m" else Client.KLINE_INTERVAL_1MINUTE
+        klines = client.get_klines(symbol=SYMBOL, interval=interval, limit=limit)
+        klines_history = [float(k[4]) for k in klines]  # close prices
+        print(f"[{now_str()}] [INIT] Loaded {len(klines_history)} historical closes.")
+    except Exception as e:
+        print(f"[{now_str()}] [INIT ERROR] {e}")
+        send_exception_to_telegram(e)
+        klines_history = []
+
+# -----------------------------
+# Reconcile open orders on startup
+# -----------------------------
+def reconcile_open_orders():
+    global limit_buy_id, tp_id, position_open, limit_buy_timestamp
+    try:
+        open_orders = client.get_open_orders(symbol=SYMBOL)
+        print(f"[{now_str()}] [RECONCILE] Found {len(open_orders)} open orders at startup")
+        for o in open_orders:
+            side = o.get("side")
+            type_ = o.get("type")
+            order_id = o.get("orderId")
+            price = float(o.get("price") or 0)
+            if side == "BUY" and type_ == "LIMIT":
+                limit_buy_id = order_id
+                limit_buy_timestamp = time.time()
+                position_open = True
+                print(f"[{now_str()}] [RECONCILE] Adopted LIMIT BUY {order_id} at {price}")
+                send_telegram(f"Adopted existing LIMIT BUY {order_id} @ {price}")
+                # start cancel timer for this adopted buy
+                start_limit_buy_cancel_timer(limit_buy_id, CANCEL_AFTER)
+            elif side == "SELL" and type_ == "LIMIT":
+                tp_id = order_id
+                position_open = True
+                print(f"[{now_str()}] [RECONCILE] Adopted TP SELL {order_id} at {price}")
+                send_telegram(f"Adopted existing TP SELL {order_id} @ {price}")
+    except Exception as e:
+        print(f"[{now_str()}] [RECONCILE ERROR] {e}")
+        send_exception_to_telegram(e)
+
+# -----------------------------
+# Cancel timer thread for limit buy
+# -----------------------------
+def start_limit_buy_cancel_timer(order_id: int, timeout_seconds: int):
+    global cancel_event
+    cancel_event = threading.Event()
+
+    def worker():
+        print(f"[{now_str()}] [CANCEL-TIMER] Started for order {order_id}. Timeout {timeout_seconds}s")
+        waited = 0
+        while waited < timeout_seconds:
+            if cancel_event.is_set():
+                print(f"[{now_str()}] [CANCEL-TIMER] Event set - not canceling {order_id}")
+                return
+            time.sleep(1)
+            waited += 1
+        # timed out -> cancel if still outstanding
+        with lock:
+            global limit_buy_id, limit_buy_timestamp, position_open
+            if limit_buy_id == order_id:
+                try:
+                    print(f"[{now_str()}] [CANCEL-TIMER] Canceling unfilled limit buy {order_id} ...")
+                    client.cancel_order(symbol=SYMBOL, orderId=order_id)
+                    send_telegram(f" Cancelled unfilled limit buy {order_id} after {timeout_seconds//60} minutes")
+                    log_trade("CANCELLED_UNFILLED_BUY", order_id, notes=f"Timed out {timeout_seconds}s")
+                except Exception as e:
+                    print(f"[{now_str()}] [CANCEL-TIMER ERROR] {e}")
+                    send_exception_to_telegram(e)
+                finally:
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    position_open = False
+        print(f"[{now_str()}] [CANCEL-TIMER] Worker exiting for {order_id}")
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return cancel_event
+
+# -----------------------------
+# Place take-profit (limit sell)
+# -----------------------------
+def place_take_profit(filled_entry_price: float):
+    global tp_id, total_trades, last_trade
+    tp_price = round(filled_entry_price * (1 + TP_PCT), 2)
+    try:
+        print(f"[{now_str()}] [TP] Placing TP limit sell at {tp_price} ...")
+        order = client.create_order(
+            symbol=SYMBOL,
+            side="SELL",
+            type="LIMIT",
+            quantity=QUANTITY,
+            price=str(tp_price),
+            timeInForce="GTC"
         )
+        tp_id = order.get("orderId")
+        total_trades += 1
+        last_trade = {"type": "TP_PLACED", "order_id": tp_id, "entry": filled_entry_price, "tp": tp_price}
+        print(f"[{now_str()}] [TP] TP order placed. orderId={tp_id}, TP={tp_price}")
+        send_telegram(f" TP placed at {tp_price}, orderId={tp_id}")
+        log_trade("TP_PLACED", tp_id, entry=filled_entry_price, exit_price=tp_price, quantity=QUANTITY, profit=0.0, notes="TP placed after buy fill")
+    except Exception as e:
+        print(f"[{now_str()}] [TP ERROR] Failed to place TP: {e}")
+        send_exception_to_telegram(e)
+        send_telegram(f" Failed to place TP: {e}")
 
-        if not klines:
-            break
+# -----------------------------
+# Manual stop-loss execution
+# -----------------------------
+def execute_manual_sl(current_price: float):
+    global tp_id, position_open, entry_price, total_profit, last_trade, limit_buy_id, limit_buy_timestamp
+    try:
+        print(f"[{now_str()}] [SL] Manual SL triggered at {current_price}. Exiting position.")
+        send_telegram(f"Manual SL triggered at {current_price}. Exiting position.")
+        if tp_id:
+            try:
+                client.cancel_order(symbol=SYMBOL, orderId=tp_id)
+                print(f"[{now_str()}] [SL] Canceled TP order {tp_id}")
+            except Exception as e:
+                print(f"[{now_str()}] [SL] Error canceling TP {tp_id}: {e}")
 
-        all_klines += klines
-        last_open_time = klines[-1][0]
-        start_time = last_open_time + 1
-        if len(klines) < MAX_LIMIT:
-            break
-        time.sleep(0.2)
+        if USE_MARKET_ON_SL:
+            sell = client.order_market_sell(symbol=SYMBOL, quantity=QUANTITY)
+            fills = sell.get("fills", [])
+            executed_price = float(fills[0]["price"]) if fills else current_price
+            print(f"[{now_str()}] [SL] MARKET sell executed at {executed_price}")
+        else:
+            executed_price = round(current_price+20, 2)
+            sell = client.create_order(symbol=SYMBOL, side="SELL", type="LIMIT", quantity=QUANTITY, price=str(executed_price), timeInForce="GTC")
+            print(f"[{now_str()}] [SL] LIMIT sell order placed: {sell}")
 
-    df = pd.DataFrame(all_klines, columns=[
-        "timestamp","open","high","low","close","volume",
-        "close_time","quote_volume","trades",
-        "taker_base_volume","taker_quote_volume","ignored"
-    ])
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms").dt.tz_localize("UTC").dt.tz_convert(tz)
-    df[["open","high","low","close"]] = df[["open","high","low","close"]].astype(float)
-    return df
+        profit = (executed_price - entry_price) * QUANTITY
+        total_profit += profit
+        print(f"[{now_str()}] [SL] Position closed. P/L: {profit:.8f}")
+        send_telegram(f"Stop Loss executed at {executed_price}. P/L: {profit:.8f} USDT")
+        log_trade("SL", None, entry=entry_price, exit_price=executed_price, quantity=QUANTITY, profit=profit, notes="Manual SL")
+        last_trade = {"type": "SL", "entry": entry_price, "exit": executed_price, "profit": profit}
+    except Exception as e:
+        print(f"[{now_str()}] [SL ERROR] {e}")
+        send_exception_to_telegram(e)
+    finally:
+        with lock:
+            limit_buy_id = None
+            limit_buy_timestamp = None
+            tp_id = None
+            entry_price = 0.0
+            position_open = False
+
+# -----------------------------
+# User data handler (executionReport)
+# -----------------------------
+def user_data_handler(msg):
+    global limit_buy_id, limit_buy_timestamp, cancel_event, tp_id, entry_price, position_open, successful_trades, total_profit, last_trade
+    try:
+        if msg.get("e") != "executionReport":
+            return
+
+        order_id = int(msg.get("i", 0))
+        status = msg.get("X")
+        last_filled_price = float(msg.get("L", 0)) if msg.get("L") else 0.0
+        print(f"[{now_str()}] [USER EVENT] orderId={order_id}, status={status}, lastPrice={last_filled_price}")
+
+        with lock:
+            # Handle limit buy outcomes
+            if limit_buy_id is not None and order_id == limit_buy_id:
+                if status == "FILLED":
+                    entry_price = last_filled_price
+                    print(f"[{now_str()}] [USER EVENT] Limit BUY FILLED at {entry_price} (order {order_id})")
+                    send_telegram(f"Limit Buy FILLED at {entry_price} (order {order_id})")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    place_take_profit(entry_price)
+                    position_open = True
+                    last_trade = {"type": "BUY_FILLED", "order_id": order_id, "entry": entry_price}
+                    log_trade("BUY_FILLED", order_id, entry=entry_price, exit_price=0.0, quantity=QUANTITY, profit=0.0, notes="Limit buy filled")
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[{now_str()}] [USER EVENT] Limit BUY {order_id} was {status}. Clearing state.")
+                    send_telegram(f"Limit Buy {order_id} {status}.")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    limit_buy_timestamp = None
+                    position_open = False
+                    log_trade("BUY_CANCELLED", order_id, notes=f"Limit buy {status}")
+
+            # Handle TP outcomes
+            elif tp_id is not None and order_id == tp_id:
+                if status == "FILLED":
+                    filled_price = last_filled_price
+                    profit = (filled_price - entry_price) * QUANTITY
+                    total_profit += profit
+                    successful_trades += 1
+                    position_open = False
+                    print(f"[{now_str()}] [USER EVENT] TP FILLED at {filled_price} (order {order_id})")
+                    send_telegram(f"TP FILLED at {filled_price}. Profit: {profit:.8f} USDT")
+                    log_trade("TP", order_id, entry=entry_price, exit_price=filled_price, quantity=QUANTITY, profit=profit, notes="TP hit")
+                    last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
+                    tp_id = None
+                    entry_price = 0.0
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[{now_str()}] [USER EVENT] TP order {order_id} was {status}. Clearing state.")
+                    send_telegram(f"TP order {order_id} {status}.")
+                    tp_id = None
+                    log_trade("TP_CANCELLED", order_id, notes=f"TP {status}")
+    except Exception as e:
+        print(f"[{now_str()}] [USER HANDLER ERROR] {e}")
+        send_exception_to_telegram(e)
+
+def kline_handler(msg):
+    global klines_history, limit_buy_id, limit_buy_timestamp, position_open, entry_price, tp_id, cancel_event
+    try:
+        k = msg.get('k', {})
+        if not k:
+            return
+
+        is_closed = k.get('x', False)
+        close_price = float(k.get('c', 0))
+        open_price = float(k.get('o', 0))
+
+        if not is_closed:
+            return
+
+        # Append closed candle price
+        klines_history.append(close_price)
+        if len(klines_history) > KL_HISTORY_LIMIT:
+            klines_history.pop(0)
+
+        # Need at least RSI computation window + 3
+        if len(klines_history) >= RSI_PERIOD + 3:
+
+            df = pd.DataFrame({'close': klines_history})
+            df['rsi'] = RSIIndicator(df['close'], window=RSI_PERIOD).rsi()
+
+            rsi_prev2 = df['rsi'].iloc[-3]
+            rsi_prev1 = df['rsi'].iloc[-2]
+            rsi_now   = df['rsi'].iloc[-1]
+
+            print(f"[{now_str()}] [KLINE] Close={close_price:.2f}, "
+                  f"RSI_prev2={rsi_prev2:.2f}, RSI_prev1={rsi_prev1:.2f}, RSI_now={rsi_now:.2f}")
+
+            # ============================================================
+            # STRICT BUY CONDITIONS (ALL MUST MATCH)
+            # ============================================================
+            cond1 = (rsi_now < 40)
+            cond2 = (close_price > open_price)
+            cond3 = (rsi_prev2 < 30 and rsi_prev1 < 30)
+            cond4 = (rsi_prev1 < 30 and rsi_now >= 30)
+
+            buy_signal = cond1 and cond2 and cond3 and cond4
+
+            if buy_signal:
+                buy_reason = "RSI oversold reversal + green candle)"
+
+                with lock:
+                    if not position_open:
+                        buy_price = round(close_price - 30, 2)
+                        try:
+                            print(f"[{now_str()}] [ORDER] {buy_reason}: Placing LIMIT BUY at {buy_price}")
+                            send_telegram(f"BUY SIGNAL: {buy_reason}. Placing LIMIT BUY at {buy_price}")
+
+                            order = client.create_order(
+                                symbol=SYMBOL,
+                                side="BUY",
+                                type="LIMIT",
+                                quantity=QUANTITY,
+                                price=str(buy_price),
+                                timeInForce="GTC"
+                            )
+
+                            limit_buy_id = order.get("orderId")
+                            limit_buy_timestamp = time.time()
+                            position_open = True
+
+                            print(f"[{now_str()}] [ORDER] LIMIT BUY placed orderId={limit_buy_id} at {buy_price}")
+                            log_trade("BUY_PLACED", limit_buy_id, entry=buy_price, exit_price=0.0,
+                                      quantity=QUANTITY, profit=0.0,
+                                      notes=buy_reason)
+
+                            start_limit_buy_cancel_timer(limit_buy_id, CANCEL_AFTER)
+
+                        except Exception as e:
+                            print(f"[{now_str()}] [ORDER ERROR] Failed to place limit buy: {e}")
+                            send_exception_to_telegram(e)
+                            limit_buy_id = None
+                            limit_buy_timestamp = None
+                            position_open = False
+
+            # ============================================================
+            # SL check
+            # ============================================================
+            if position_open and entry_price > 0:
+                sl_trigger = entry_price * (1 - SL_PCT)
+                if close_price <= sl_trigger:
+                    print(f"[{now_str()}] [SL] Close {close_price} <= {sl_trigger}. Triggering manual SL.")
+                    execute_manual_sl(close_price)
+
+    except Exception as e:
+        print(f"[{now_str()}] [KLINE ERROR] {e}")
+        send_exception_to_telegram(e)
 
 
-def compute_rsi(df, period=14):
-    delta = df['close'].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(period, min_periods=period).mean()
-    avg_loss = loss.rolling(period, min_periods=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+# -----------------------------
+# Flask /health endpoint
+# -----------------------------
+@app.route("/health", methods=["GET"])
+def health():
+    with lock:
+        return jsonify({
+            "status": "running",
+            "symbol": SYMBOL,
+            "timeframe": TIMEFRAME,
+            "position_open": position_open,
+            "entry_price": entry_price,
+            "limit_buy_id": limit_buy_id,
+            "tp_id": tp_id,
+            "total_trades": total_trades,
+            "successful_trades": successful_trades,
+            "total_profit": total_profit,
+            "last_trade": last_trade
+        })
 
+def start_flask():
+    # disable Flask debug reloader when running in thread
+    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
 
-def backtest():
-    df = fetch_historical_ohlcv(symbol, timeframe, days_back=30)
-    if df.empty:
-        print("No data. Exiting.")
-        return
+# -----------------------------
+# Start bot
+# -----------------------------
+def start_bot():
+    print(f"[{now_str()}] [BOT] Initializing...")
+    initialize_klines_history(limit=KL_HISTORY_LIMIT)
+    #reconcile_open_orders()
 
-    df['rsi'] = compute_rsi(df, RSI_PERIOD)
-    total_profit = 0
-    successful_trades = 0
-    total_trades = 0
-    i = RSI_PERIOD  # start after RSI warmup
+    # start Flask in separate thread
+    flask_thread = threading.Thread(target=start_flask, daemon=True)
+    flask_thread.start()
+    print(f"[{now_str()}] [BOT] Flask /health endpoint started on port 5000")
 
-    while i < len(df) - ORDER_EXPIRATION - 1:
-        close_price = df["close"].iloc[i]
-        ts = df["timestamp"].iloc[i].strftime("%Y-%m-%d %H:%M:%S")
+    # start websockets
+    twm.start()
+    twm.start_user_socket(callback=user_data_handler)
+    print(f"[{now_str()}] [BOT] User data WebSocket started")
+    # Start kline socket for 5m (twm accepts interval string like '5m')
+    twm.start_kline_socket(symbol=SYMBOL.lower(), interval=TIMEFRAME, callback=kline_handler)
+    print(f"[{now_str()}] [BOT] Kline WebSocket started ({TIMEFRAME})")
 
-        # RSI buy condition: cross below 30
-        rsi_now = df['rsi'].iloc[i]
-        rsi_prev = df['rsi'].iloc[i - 1]
-        buy_signal = (rsi_prev > RSI_OVERSOLD) and (rsi_now <= RSI_OVERSOLD)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"[{now_str()}] [BOT] Shutting down...")
+        try:
+            twm.stop()
+        except:
+            pass
 
-        if not buy_signal:
-            i += 1
-            continue
-
-        # Place limit buy
-        limit_buy_price = close_price * BUY_DISCOUNT
-        tp_price = limit_buy_price * TP_MULTIPLIER
-        sl_price = limit_buy_price * SL_MULTIPLIER
-
-        print(
-            f"\nRSI BUY SIGNAL 🔔 | {ts}\n"
-            f"  Limit Buy @ {limit_buy_price:.2f}\n"
-            f"  TP = {tp_price:.2f}\n"
-            f"  SL = {sl_price:.2f}\n"
-            f"  Order expires in {ORDER_EXPIRATION} candles"
-        )
-
-        # Step 1: check if limit buy is filled in next ORDER_EXPIRATION candles
-        buy_filled = False
-        expiration_index = i + ORDER_EXPIRATION
-        for j in range(i + 1, min(expiration_index + 1, len(df))):
-            low_ = df['low'].iloc[j]
-            ts_j = df['timestamp'].iloc[j].strftime("%Y-%m-%d %H:%M:%S")
-            if low_ <= limit_buy_price:
-                buy_filled = True
-                fill_index = j
-                print(f"BUY FILLED ✔ | {ts_j} | Price: {limit_buy_price:.2f}")
-                total_trades += 1
-                break
-
-        if not buy_filled:
-            print("❌ Buy order expired. Restarting at new price.\n")
-            i = expiration_index
-            continue
-
-        # Step 2: check TP/SL after fill
-        trade_closed = False
-        for k in range(fill_index + 1, len(df)):
-            high2 = df['high'].iloc[k]
-            low2 = df['low'].iloc[k]
-            ts_k = df['timestamp'].iloc[k].strftime("%Y-%m-%d %H:%M:%S")
-
-            if high2 >= tp_price:
-                profit = (tp_price - limit_buy_price) * quantity
-                total_profit += profit
-                successful_trades += 1
-                print(f"TP HIT ✔ | {ts_k} | Profit: {profit:.4f} USDC\n")
-                i = k
-                trade_closed = True
-                break
-
-            if low2 <= sl_price:
-                profit = (sl_price - limit_buy_price) * quantity
-                total_profit += profit
-                print(f"STOP LOSS ❌ | {ts_k} | Loss: {profit:.4f} USDC\n")
-                i = k
-                trade_closed = True
-                break
-
-        if not trade_closed:
-            print("Trade open at end of data. Stopping.\n")
-            break
-
-        i += 1
-
-    # Summary
-    start_time = df["timestamp"].iloc[0].strftime("%Y-%m-%d %H:%M:%S")
-    end_time = df["timestamp"].iloc[-1].strftime("%Y-%m-%d %H:%M:%S")
-    start_price = df["close"].iloc[0]
-    end_price = df["close"].iloc[-1]
-    win_rate = (successful_trades / total_trades) if total_trades else 0
-
-    print("\n========= BACKTEST RESULTS =========")
-    print(f"Start Time:        {start_time} | Price: {start_price:.2f}")
-    print(f"End Time:          {end_time} | Price: {end_price:.2f}")
-    print(f"Total Trades:      {total_trades}")
-    print(f"Successful Trades: {successful_trades}")
-    print(f"Win Rate:          {win_rate:.2%}")
-    print(f"Total Profit:      {total_profit:.4f} USDC")
-    print("====================================")
-
-
+# -----------------------------
+# Entry
+# -----------------------------
 if __name__ == "__main__":
-    backtest()
+    try:
+        start_bot()
+    except Exception as e:
+        print(f"[{now_str()}] [MAIN ERROR] {e}")
+        send_exception_to_telegram(e)
+        raise
