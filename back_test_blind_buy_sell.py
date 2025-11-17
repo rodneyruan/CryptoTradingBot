@@ -17,16 +17,16 @@ TP_MULTIPLIER = 1.0015     # +0.15%
 SL_MULTIPLIER = 0.99       # -1%
 ORDER_EXPIRATION = 10      # 10 candles (150 min)
 tz = pytz.timezone("America/Los_Angeles")
-MAX_LIMIT = 1500           # Binance max candles per request
+MAX_LIMIT = 1000           # Binance max candles per request
 
 
 def fetch_historical_ohlcv(symbol, timeframe, days_back=30):
-    """Fetch OHLCV for the past X days, handling pagination due to Binance limit."""
+    """Fetch OHLCV for the past X days, handling pagination due to Binance 1000-candle limit."""
     all_klines = []
     end_time = int(time.time() * 1000)  # now in ms
     start_time = end_time - days_back * 24 * 60 * 60 * 1000  # days_back in ms
 
-    while True:
+    while start_time < end_time:
         klines = client.get_historical_klines(
             symbol=symbol,
             interval=timeframe,
@@ -41,15 +41,12 @@ def fetch_historical_ohlcv(symbol, timeframe, days_back=30):
         all_klines += klines
 
         last_open_time = klines[-1][0]
-        # Move start_time forward to fetch next batch, add 1 ms to avoid overlap
-        start_time = last_open_time + 1
+        start_time = last_open_time + 1  # avoid overlap
 
-        # Stop if fetched fewer than MAX_LIMIT candles (end reached)
         if len(klines) < MAX_LIMIT:
             break
 
-        # Sleep to avoid rate limits
-        time.sleep(0.2)
+        time.sleep(0.2)  # avoid rate limits
 
     df = pd.DataFrame(all_klines, columns=[
         "timestamp","open","high","low","close","volume",
@@ -91,14 +88,13 @@ def backtest():
             f"  SL = {sl_price:.2f} (-1%)\n"
         )
 
-        # Step 1: Check if LIMIT BUY gets filled in next ORDER_EXPIRATION candles
+        # Step 1: Check the next ORDER_EXPIRATION candles for buy fill
         buy_filled = False
         expiration_index = attempt_index + ORDER_EXPIRATION
 
         for j in range(attempt_index + 1, min(expiration_index + 1, len(df))):
             low_ = df["low"].iloc[j]
             ts_j = df["timestamp"].iloc[j].strftime("%Y-%m-%d %H:%M:%S")
-
             if low_ <= limit_buy_price:
                 buy_filled = True
                 fill_index = j
@@ -106,7 +102,6 @@ def backtest():
                 total_trades += 1
                 break
 
-        # If not filled, move to next expiration candle
         if not buy_filled:
             print("❌ Buy order EXPIRED after 10 candles. Restarting with new price.\n")
             i = expiration_index
@@ -142,14 +137,16 @@ def backtest():
 
         i += 1
 
-    # Summary with start and end timestamps
+    # Summary with start/end timestamps and prices
     start_time = df["timestamp"].iloc[0].strftime("%Y-%m-%d %H:%M:%S")
     end_time   = df["timestamp"].iloc[-1].strftime("%Y-%m-%d %H:%M:%S")
+    start_price = df["close"].iloc[0]
+    end_price   = df["close"].iloc[-1]
     win_rate = (successful_trades / total_trades) if total_trades else 0
 
     print("\n========= BACKTEST RESULTS =========")
-    print(f"Start Time:        {start_time}")
-    print(f"End Time:          {end_time}")
+    print(f"Start Time:        {start_time} | Price: {start_price:.2f}")
+    print(f"End Time:          {end_time} | Price: {end_price:.2f}")
     print(f"Total Trades:      {total_trades}")
     print(f"Successful Trades: {successful_trades}")
     print(f"Win Rate:          {win_rate:.2%}")
