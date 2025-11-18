@@ -34,13 +34,13 @@ from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 # -----------------------------
 SYMBOL = "BTCFDUSD"      # Spot symbol
 QUANTITY = 0.01          # BTC to buy
-TIMEFRAME = sys.argv[1] if len(sys.argv) > 1 else "5m"  # timeframe from argv[1], default "5m"
+TIMEFRAME = sys.argv[1] if len(sys.argv) > 1 else "1m"  # timeframe from argv[1], default "5m"
 
 # EMA parameters
 EMA_FAST = 9
 EMA_SLOW = 21
 
-TP_PCT = 0.003           # 0.3% TP
+TP_PCT = 0.002           # 0.3% TP
 SL_PCT = 0.01            # 1.0% SL
 CANCEL_AFTER = 10 * 60   # cancel unfilled limit buy after 10 minutes
 USE_MARKET_ON_SL = True  # execute MARKET sell on SL
