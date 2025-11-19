@@ -3,7 +3,10 @@
 Spot EMA WebSocket Bot (timeframe from argv[1], default 5m)
  - Limit Buy when EMA_FAST crosses above EMA_SLOW
  - TP placed after buy fills (limit sell)
- - Manual SL monitored via candle closes (market sell by default)
+ - NO stop-loss order at entry
+ - Stop-loss handled by monitoring each closed candle:
+     * If close <= entry*(1-SL_PCT) -> Cancel TP, place LIMIT SELL at close+20
+     * Monitor that LIMIT SELL for 5 closed candles -> if not filled, cancel & MARKET sell
  - Cancel unfilled limit buy after CANCEL_AFTER seconds
  - Telegram notifications
  - CSV trade logging
@@ -34,17 +37,20 @@ from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 # -----------------------------
 SYMBOL = "BTCFDUSD"      # Spot symbol
 QUANTITY = 0.01          # BTC to buy
-TIMEFRAME = sys.argv[1] if len(sys.argv) > 1 else "1m"  # timeframe from argv[1], default "5m"
+TIMEFRAME = sys.argv[1] if len(sys.argv) > 1 else "1m"  # timeframe from argv[1], default "1m"
 
 # EMA parameters
 EMA_FAST = 9
 EMA_SLOW = 21
 
-TP_PCT = 0.002           # 0.3% TP
-SL_PCT = 0.01            # 1.0% SL
+TP_PCT = 0.002           # 0.2% TP
+SL_PCT = 0.01            # 1.0% SL (trigger level)
 CANCEL_AFTER = 10 * 60   # cancel unfilled limit buy after 10 minutes
-USE_MARKET_ON_SL = True  # execute MARKET sell on SL
+USE_MARKET_ON_SL = True  # execute MARKET sell on SL fallback
 KL_HISTORY_LIMIT = 200   # how many historical klines to fetch at startup
+
+# stop-loss limit monitoring params
+STOPLOSS_LIMIT_RETRY_MAX = 5  # monitor up to 5 closed candles
 
 LOG_FILE = "trade_log.csv"
 LOCAL_TZ = "America/Los_Angeles"  # for readable timestamps
@@ -60,6 +66,10 @@ limit_buy_id = None
 limit_buy_timestamp = None
 cancel_event = None
 tp_id = None
+# stop-loss limit order created when SL triggers
+stoploss_limit_id = None
+stoploss_monitor_attempts = 0
+
 entry_price = 0.0
 position_open = False  # True if we have an open position or outstanding buy
 total_trades = 0
@@ -160,7 +170,7 @@ def initialize_klines_history(limit=KL_HISTORY_LIMIT):
 # Reconcile open orders on startup
 # -----------------------------
 def reconcile_open_orders():
-    global limit_buy_id, tp_id, position_open, limit_buy_timestamp
+    global limit_buy_id, tp_id, stoploss_limit_id, position_open, limit_buy_timestamp
     try:
         open_orders = client.get_open_orders(symbol=SYMBOL)
         print(f"[{now_str()}] [RECONCILE] Found {len(open_orders)} open orders at startup")
@@ -177,10 +187,12 @@ def reconcile_open_orders():
                 send_telegram(f"Adopted existing LIMIT BUY {order_id} @ {price}")
                 start_limit_buy_cancel_timer(limit_buy_id, CANCEL_AFTER)
             elif side == "SELL" and type_ == "LIMIT":
+                # assume TP or an existing limit SL; adopt as TP by default
                 tp_id = order_id
                 position_open = True
-                print(f"[{now_str()}] [RECONCILE] Adopted TP SELL {order_id} at {price}")
-                send_telegram(f"Adopted existing TP SELL {order_id} @ {price}")
+                print(f"[{now_str()}] [RECONCILE] Adopted TP/SELL {order_id} at {price}")
+                send_telegram(f"Adopted existing TP/SELL {order_id} @ {price}")
+            # we do not create an initial SL at entry, so ignore other cases
     except Exception as e:
         print(f"[{now_str()}] [RECONCILE ERROR] {e}")
         send_exception_to_telegram(e)
@@ -254,16 +266,28 @@ def place_take_profit(filled_entry_price: float):
 # Manual stop-loss execution
 # -----------------------------
 def execute_manual_sl(current_price: float):
-    global tp_id, position_open, entry_price, total_profit, last_trade, limit_buy_id, limit_buy_timestamp
+    global tp_id, stoploss_limit_id, stoploss_monitor_attempts, position_open, entry_price, total_profit, last_trade, limit_buy_id, limit_buy_timestamp
     try:
         print(f"[{now_str()}] [SL] Manual SL triggered at {current_price}. Exiting position.")
         send_telegram(f"Manual SL triggered at {current_price}. Exiting position.")
+        # Cancel TP if exists
         if tp_id:
             try:
                 client.cancel_order(symbol=SYMBOL, orderId=tp_id)
                 print(f"[{now_str()}] [SL] Canceled TP order {tp_id}")
             except Exception as e:
                 print(f"[{now_str()}] [SL] Error canceling TP {tp_id}: {e}")
+            tp_id = None
+
+        # Cancel any active stop-loss limit (we're executing manual SL)
+        if stoploss_limit_id:
+            try:
+                client.cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
+                print(f"[{now_str()}] [SL] Canceled stop-loss LIMIT order {stoploss_limit_id} (manual SL).")
+            except Exception as e:
+                print(f"[{now_str()}] [SL] Error canceling stop-loss limit {stoploss_limit_id}: {e}")
+            stoploss_limit_id = None
+            stoploss_monitor_attempts = 0
 
         if USE_MARKET_ON_SL:
             sell = client.order_market_sell(symbol=SYMBOL, quantity=QUANTITY)
@@ -289,6 +313,8 @@ def execute_manual_sl(current_price: float):
             limit_buy_id = None
             limit_buy_timestamp = None
             tp_id = None
+            stoploss_limit_id = None
+            stoploss_monitor_attempts = 0
             entry_price = 0.0
             position_open = False
 
@@ -296,7 +322,7 @@ def execute_manual_sl(current_price: float):
 # User data handler (executionReport)
 # -----------------------------
 def user_data_handler(msg):
-    global limit_buy_id, limit_buy_timestamp, cancel_event, tp_id, entry_price, position_open, successful_trades, total_profit, last_trade
+    global limit_buy_id, limit_buy_timestamp, cancel_event, tp_id, stoploss_limit_id, stoploss_monitor_attempts, entry_price, position_open, successful_trades, total_profit, last_trade
     try:
         if msg.get("e") != "executionReport":
             return
@@ -317,6 +343,7 @@ def user_data_handler(msg):
                         cancel_event.set()
                     limit_buy_id = None
                     limit_buy_timestamp = None
+                    # Place only TP at entry (NO SL order)
                     place_take_profit(entry_price)
                     position_open = True
                     last_trade = {"type": "BUY_FILLED", "order_id": order_id, "entry": entry_price}
@@ -344,21 +371,58 @@ def user_data_handler(msg):
                     log_trade("TP", order_id, entry=entry_price, exit_price=filled_price, quantity=QUANTITY, profit=profit, notes="TP hit")
                     last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
                     tp_id = None
+                    # If a stop-loss limit exists (rare if race), cancel it
+                    if stoploss_limit_id:
+                        try:
+                            client.cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
+                            print(f"[{now_str()}] [LINK] Canceled stop-loss LIMIT {stoploss_limit_id} because TP filled")
+                            send_telegram(f"Canceled stop-loss LIMIT {stoploss_limit_id}")
+                            log_trade("SL_CANCELLED_BY_TP", stoploss_limit_id, notes="Canceled because TP filled")
+                        except Exception as e:
+                            print(f"[{now_str()}] [LINK ERROR] Failed to cancel stop-loss limit {stoploss_limit_id}: {e}")
+                            send_exception_to_telegram(e)
+                        finally:
+                            stoploss_limit_id = None
+                            stoploss_monitor_attempts = 0
                     entry_price = 0.0
                 elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
                     print(f"[{now_str()}] [USER EVENT] TP order {order_id} was {status}. Clearing state.")
                     send_telegram(f"TP order {order_id} {status}.")
                     tp_id = None
                     log_trade("TP_CANCELLED", order_id, notes=f"TP {status}")
+                    # If TP canceled and we already had a stop-loss limit, keep monitoring it per spec
+
+            # Handle stop-loss LIMIT outcomes (these are placed only when SL trigger happens)
+            elif stoploss_limit_id is not None and order_id == stoploss_limit_id:
+                if status == "FILLED":
+                    filled_price = last_filled_price
+                    profit = (filled_price - entry_price) * QUANTITY
+                    total_profit += profit
+                    print(f"[{now_str()}] [USER EVENT] Stop-loss LIMIT FILLED at {filled_price} (order {order_id})")
+                    send_telegram(f"Stop-loss LIMIT FILLED at {filled_price}. P/L: {profit:.8f} USDT")
+                    log_trade("SL_LIMIT_FILLED", order_id, entry=entry_price, exit_price=filled_price, quantity=QUANTITY, profit=profit, notes="Stop-loss limit hit")
+                    last_trade = {"type": "SL_LIMIT", "entry": entry_price, "exit": filled_price, "profit": profit}
+                    stoploss_limit_id = None
+                    stoploss_monitor_attempts = 0
+                    entry_price = 0.0
+                    position_open = False
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[{now_str()}] [USER EVENT] Stop-loss LIMIT {order_id} was {status}. Clearing state.")
+                    send_telegram(f"Stop-loss LIMIT {order_id} {status}.")
+                    stoploss_limit_id = None
+                    stoploss_monitor_attempts = 0
+                    log_trade("SL_LIMIT_CANCELLED", order_id, notes=f"Stop-loss limit {status}")
+                    # If it was canceled for some reason, we will handle market sell in kline monitoring if needed
     except Exception as e:
         print(f"[{now_str()}] [USER HANDLER ERROR] {e}")
         send_exception_to_telegram(e)
 
 # -----------------------------
-# Kline handler: compute EMAs and trigger buy on crossover
+# Kline handler: compute EMAs, trigger buy on crossover, and monitor SL limit
 # -----------------------------
 def kline_handler(msg):
     global klines_history, limit_buy_id, limit_buy_timestamp, position_open, entry_price, tp_id, cancel_event
+    global stoploss_limit_id, stoploss_monitor_attempts
     try:
         k = msg.get('k', {})
         if not k:
@@ -442,13 +506,114 @@ def kline_handler(msg):
                             position_open = False
 
             # ============================================================
-            # SL check (unchanged)
+            # Stop-loss monitoring (per-spec)
+            # NO SL order at entry — monitor each closed candle
             # ============================================================
             if position_open and entry_price > 0:
                 sl_trigger = entry_price * (1 - SL_PCT)
-                if close_price <= sl_trigger:
-                    print(f"[{now_str()}] [SL] Close {close_price} <= {sl_trigger}. Triggering manual SL.")
-                    execute_manual_sl(close_price)
+
+                # 1) If SL trigger hit and no stop-loss limit placed yet -> place limit sell at close+20
+                if close_price <= sl_trigger and stoploss_limit_id is None:
+                    with lock:
+                        print(f"[{now_str()}] [SL] Stop-trigger hit (close {close_price} <= {sl_trigger}).")
+                        # Cancel TP (best-effort)
+                        if tp_id:
+                            try:
+                                client.cancel_order(symbol=SYMBOL, orderId=tp_id)
+                                print(f"[{now_str()}] [SL] Canceled TP order {tp_id}")
+                                send_telegram(f"Canceled TP order {tp_id} because SL triggered")
+                                log_trade("TP_CANCELLED_BY_SL_TRIGGER", tp_id, notes="Canceled because SL trigger")
+                            except Exception as e:
+                                print(f"[{now_str()}] [SL] Error canceling TP {tp_id}: {e}")
+                                send_exception_to_telegram(e)
+                            finally:
+                                tp_id = None
+
+                        # Place LIMIT sell at close + 20
+                        limit_price = round(close_price + 20, 2)
+                        try:
+                            order = client.create_order(
+                                symbol=SYMBOL,
+                                side="SELL",
+                                type="LIMIT",
+                                quantity=QUANTITY,
+                                price=str(limit_price),
+                                timeInForce="GTC"
+                            )
+                            stoploss_limit_id = order.get("orderId")
+                            stoploss_monitor_attempts = 0
+                            print(f"[{now_str()}] [SL] Placed stop-loss LIMIT at {limit_price}, orderId={stoploss_limit_id}")
+                            send_telegram(f"Stop-loss LIMIT placed at {limit_price}, orderId={stoploss_limit_id}")
+                            log_trade("SL_LIMIT_PLACED", stoploss_limit_id, entry=entry_price, exit_price=limit_price, quantity=QUANTITY, profit=0.0, notes="Placed after SL trigger")
+                        except Exception as e:
+                            print(f"[{now_str()}] [SL ERROR] Failed to place stop-loss LIMIT: {e}")
+                            send_exception_to_telegram(e)
+                            stoploss_limit_id = None
+                            stoploss_monitor_attempts = 0
+
+                # 2) If a stop-loss limit exists -> monitor its status for up to 5 closed candles
+                elif stoploss_limit_id is not None:
+                    stoploss_monitor_attempts += 1
+                    try:
+                        order_status = client.get_order(symbol=SYMBOL, orderId=stoploss_limit_id)
+                        status = order_status.get("status")
+                    except Exception as e:
+                        print(f"[{now_str()}] [SL ERROR] Could not fetch stop-loss limit status: {e}")
+                        status = None
+
+                    print(f"[{now_str()}] [SL MONITOR] attempt={stoploss_monitor_attempts}, orderId={stoploss_limit_id}, status={status}")
+
+                    # if filled -> treat as SL fill
+                    if status == "FILLED":
+                        filled_price = float(order_status.get("price") or close_price)
+                        profit = (filled_price - entry_price) * QUANTITY
+                        total_profit += profit
+                        print(f"[{now_str()}] [SL] Stop-loss LIMIT FILLED at {filled_price}. P/L: {profit:.8f}")
+                        send_telegram(f"Stop-loss LIMIT FILLED at {filled_price}. P/L: {profit:.8f} USDT")
+                        log_trade("SL_LIMIT_FILLED", stoploss_limit_id, entry=entry_price, exit_price=filled_price, quantity=QUANTITY, profit=profit, notes="Stop-loss limit filled")
+                        last_trade = {"type": "SL_LIMIT", "entry": entry_price, "exit": filled_price, "profit": profit}
+                        # clear state
+                        stoploss_limit_id = None
+                        stoploss_monitor_attempts = 0
+                        entry_price = 0.0
+                        position_open = False
+
+                    # if exceeded attempts and still not filled -> cancel & market sell
+                    elif stoploss_monitor_attempts >= STOPLOSS_LIMIT_RETRY_MAX:
+                        print(f"[{now_str()}] [SL] Stop-loss LIMIT not filled after {STOPLOSS_LIMIT_RETRY_MAX} attempts - cancelling and market selling.")
+                        send_telegram(f"Stop-loss LIMIT not filled after {STOPLOSS_LIMIT_RETRY_MAX} periods. Cancelling and market selling.")
+                        # cancel limit
+                        try:
+                            client.cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
+                            log_trade("SL_LIMIT_CANCELLED_AFTER_TIMEOUT", stoploss_limit_id, notes=f"Not filled in {STOPLOSS_LIMIT_RETRY_MAX} periods")
+                        except Exception as e:
+                            print(f"[{now_str()}] [SL ERROR] Failed to cancel SL limit {stoploss_limit_id}: {e}")
+                            send_exception_to_telegram(e)
+                        finally:
+                            stoploss_limit_id = None
+                            stoploss_monitor_attempts = 0
+
+                        # market sell to exit
+                        try:
+                            sell = client.order_market_sell(symbol=SYMBOL, quantity=QUANTITY)
+                            fills = sell.get("fills", [])
+                            executed_price = float(fills[0]["price"]) if fills else close_price
+                            profit = (executed_price - entry_price) * QUANTITY
+                            total_profit += profit
+                            print(f"[{now_str()}] [SL] MARKET sell executed at {executed_price}. P/L: {profit:.8f}")
+                            send_telegram(f"Market SL executed at {executed_price}. P/L: {profit:.8f} USDT")
+                            log_trade("SL_MARKET_FILLED", None, entry=entry_price, exit_price=executed_price, quantity=QUANTITY, profit=profit, notes="Market sell after SL limit unfilled")
+                            last_trade = {"type": "SL_MARKET", "entry": entry_price, "exit": executed_price, "profit": profit}
+                        except Exception as e:
+                            print(f"[{now_str()}] [SL ERROR] Market sell failed: {e}")
+                            send_exception_to_telegram(e)
+                        # clear state
+                        entry_price = 0.0
+                        position_open = False
+
+            # ============================================================
+            # end stop-loss monitoring
+            # ============================================================
 
     except Exception as e:
         print(f"[{now_str()}] [KLINE ERROR] {e}")
@@ -468,6 +633,7 @@ def health():
             "entry_price": entry_price,
             "limit_buy_id": limit_buy_id,
             "tp_id": tp_id,
+            "stoploss_limit_id": stoploss_limit_id,
             "total_trades": total_trades,
             "successful_trades": successful_trades,
             "total_profit": total_profit,
