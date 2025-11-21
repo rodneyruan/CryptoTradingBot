@@ -188,14 +188,27 @@ def cleanup_sl():
     position_open = False
 
 # =============================
-# KLINE HANDLER
+# KLINE HANDLER (FIXED FOR MULTIPLEX)
 # =============================
 def kline_handler(msg):
     global klines_history, position_open, entry_price, stoploss_limit_id, stoploss_monitor_attempts
 
-    k = msg["k"]
-    if not k["x"]: return
+    # ← FIX: Handle multiplex wrapper ('data' key)
+    if 'data' in msg:
+        inner_msg = msg['data']
+    else:
+        inner_msg = msg  # fallback for non-multiplex
+
+    k = inner_msg.get('k')
+    if not k: return  # invalid message
+    if not k["x"]: return  # only closed candles
     close = float(k["c"])
+
+    # ← TEMP DEBUG: Print first 3 messages to verify format (remove after testing)
+    if len(klines_history) < 3:
+        print(f"[{now_str()}] [DEBUG] Raw msg: {msg}")
+        print(f"[{now_str()}] [DEBUG] Inner: {inner_msg}")
+        print(f"[{now_str()}] [DEBUG] K: {k}")
 
     klines_history.append(close)
     if len(klines_history) > KL_HISTORY_LIMIT:
@@ -293,7 +306,7 @@ def start_bot():
     twm.start()
     twm.start_futures_user_socket(callback=user_data_handler)
     
-    # ← FIXED LINE: Use multiplex for symbol-specific futures klines
+    # ← FIXED: Use multiplex for symbol-specific futures klines
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
     twm.start_futures_multiplex_socket(callback=kline_handler, streams=[stream_name])
 
