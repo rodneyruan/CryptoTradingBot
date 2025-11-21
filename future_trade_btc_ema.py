@@ -63,7 +63,8 @@ client = Client(apikey, apisecret)
 client.API_URL = "https://fapi.binance.com"
 
 # ThreadedWebsocketManager for futures
-twm = ThreadedWebsocketManager(api_key=apikey, api_secret=apisecret, futures=True)
+twm = ThreadedWebsocketManager(api_key=apikey, api_secret=apisecret)
+#twm.start()  # required to start the internal loop
 
 # order / position tracking
 limit_buy_id = None
@@ -678,9 +679,11 @@ def start_bot():
     # start websockets
     twm.start()
     twm.start_futures_user_socket(user_data_handler)
+
     print(f"[{now_str()}] [BOT] Futures user data WebSocket started")
     # Start kline socket for timeframe
     twm.start_futures_kline_socket(callback=kline_handler, symbol=SYMBOL, interval=TIMEFRAME)
+
     print(f"[{now_str()}] [BOT] Futures Kline WebSocket started ({TIMEFRAME})")
 
     try:
