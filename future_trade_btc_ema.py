@@ -60,7 +60,7 @@ PRICE_PRECISION    = symbol_info["pricePrecision"]        # usually 1 or 2
 CONTRACT_SIZE_BTC = 0.001
 QUANTITY_CONTRACTS = round(QUANTITY_BTC / CONTRACT_SIZE_BTC, QUANTITY_PRECISION)  # = 50.000
 
-print(f"[{now_str()}] [INIT] {SYMBOL} → {QUANTITY_BTC} BTC = {QUANTITY_CONTRACTS} contracts")
+#print(f"[{now_str()}] [INIT] {SYMBOL} → {QUANTITY_BTC} BTC = {QUANTITY_CONTRACTS} contracts")
 
 # ---- State variables (same as your spot bot) ----
 limit_buy_id = None
