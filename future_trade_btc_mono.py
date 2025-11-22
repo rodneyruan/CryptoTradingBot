@@ -264,7 +264,7 @@ def user_data_handler(msg):
                     print(f"[{now_str()}] [USER EVENT] TP FILLED @ {filled_price}")
                     send_telegram(f"TP HIT @ {filled_price:.2f} → Profit: {profit:+.2f} USDC")
                     log_trade("TP_FILLED", order_id, entry=entry_price, exit_p=filled_price,
-                              qty=QUANTITY_BTC, profit=profit, notes="Take profit")
+                            profit=profit, notes="Take profit")
                     last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
                     tp_id = None
                     entry_price = 0.0
@@ -297,8 +297,7 @@ def user_data_handler(msg):
                     total_profit_usdc += profit
                     print(f"[{now_str()}] [USER EVENT] SL LIMIT FILLED @ {filled_price}")
                     send_telegram(f"SL Limit Filled @ {filled_price:.2f} → P/L: {profit:+.2f} USDC")
-                    log_trade("SL_LIMIT_FILLED", order_id, entry=entry_price, exit_p=filled_price,
-                              qty=QUANTITY_BTC, profit=profit)
+                    log_trade("SL_LIMIT_FILLED", order_id, entry=entry_price, exit_p=filled_price, profit=profit)
                     last_trade = {"type": "SL_LIMIT", "profit": profit}
                     cleanup_sl_state()
 
