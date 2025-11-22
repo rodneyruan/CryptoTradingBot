@@ -31,7 +31,7 @@ from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 # =============================
 SYMBOL = "BTCUSDC"                    # BTC-settled perpetual
 QUANTITY_BTC = 0.01                   # ← We pass this directly as quantity!
-TIMEFRAME = sys.argv[1] if len(sys.argv) > 1 else "1m"
+TIMEFRAME =  "1m"
 
 
 
