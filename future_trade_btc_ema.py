@@ -163,7 +163,7 @@ def user_data_handler(msg):
             print(f"[USER STREAM] Ignored event type: {msg.get('e')}")
             return
 
-        o = msg["o"]  # order data is under "o"
+
         order_id = int(o["i"])
         status = o["X"]                    # NEW, FILLED, CANCELED, EXPIRED, etc.
         side = o["S"]                      # BUY or SELL
@@ -395,7 +395,7 @@ def keep_alive_listen_key():
             current_listen_key = client.futures_stream_get_listen_key()
             print(f"[{now_str()}] Fresh listenKey fetched: {current_listen_key[-20:]}...")
         
-        time.sleep(60)  # 30 minutes
+        time.sleep(1800)  # 30 minutes
         try:
             client.futures_stream_keepalive(listenKey=current_listen_key)
             print(f"[{now_str()}] User stream listenKey renewed")
