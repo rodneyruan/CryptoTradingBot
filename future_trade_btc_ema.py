@@ -71,6 +71,11 @@ if len(sys.argv) > 2:
     else:
         print(f"Invalid direction: {sys.argv[2]} → using default BOTH")
 
+def now_str():
+    if ZoneInfo:
+        return datetime.now(ZoneInfo(LOCAL_TZ)).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 # Print what we're running with
 print(f"[{now_str()}] Bot started → STRATEGY: {STRATEGY} | DIRECTION: {TRADE_DIRECTION}")
 
