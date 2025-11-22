@@ -387,43 +387,70 @@ def health():
             "pnl_usdc": round(total_profit_usdc, 2)
         })
 
-def keep_alive_listen_key(listen_key_holder):
+# At the top of your file (with other globals)
+user_stream_thread = None   # We'll store the thread here
+
+def keep_alive_and_auto_restart():
+    global user_stream_thread   # ← Declare FIRST, before any use!
+
+    current_listen_key = None
+
     while True:
-        time.sleep(1800)
         try:
-            client.futures_stream_keepalive(listenKey=listen_key_holder[0])
+            if current_listen_key is None:
+                current_listen_key = client.futures_stream_get_listenkey()
+                print(f"[{now_str()}] New listenKey: {current_listen_key[-20:]}...")
+
+                # Now safe: we declared global first
+                if user_stream_thread:
+                    try:
+                        twm.stop_socket(user_stream_thread)
+                        print(f"[{now_str()}] Old user stream socket stopped")
+                    except:
+                        pass
+
+                # Start new one and save the handle
+                user_stream_thread = twm.start_futures_user_socket(
+                    callback=user_data_handler,
+                    listen_key=current_listen_key
+                )
+                send_telegram("User data stream started/reconnected")
+
+            time.sleep(1800)
+            client.futures_stream_keepalive(listenKey=current_listen_key)
             print(f"[{now_str()}] listenKey renewed")
+
         except Exception as e:
-            print(f"[{now_str()}] listenKey expired or error → renewing entire stream: {e}")
-            send_telegram("User stream died → restarting it")
-            # Get brand new listenKey and restart socket
-            new_key = client.futures_stream_get_listenkey()
-            listen_key_holder[0] = new_key
-            twm.stop_socket(user_socket_handle)  # you need to keep the handle, or just restart everything
-            # Simpler: just restart the whole user socket
-            global user_socket_handle
-            user_socket_handle = twm.start_futures_user_socket(callback=user_data_handler, listen_key=new_key)
+            print(f"[{now_str()}] User stream error: {e} → reconnecting...")
+            send_telegram(f"User stream failed → reconnecting...\n{e}")
+            current_listen_key = None
+            time.sleep(10)
+
 def start_bot():
     print(f"[{now_str()}] Starting BTCUSDC Futures EMA Bot – {QUANTITY_BTC} BTC per trade")
     init_klines()
 
+    # Flask (if any)
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=5001, use_reloader=False), daemon=True).start()
 
     twm.start()
-    # This is correct for futures
-    listen_key = client.futures_stream_get_listenkey()
-    threading.Thread(target=keep_alive_listen_key, args=(listen_key,), daemon=True).start()
 
-    # ← FIXED: Use multiplex for symbol-specific futures klines
+    # === USER DATA STREAM WITH AUTO-RECONNECT ===
+    threading.Thread(target=keep_alive_and_auto_restart, daemon=True).start()
+
+    # === KLINE STREAM ===
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
     twm.start_futures_multiplex_socket(callback=kline_handler, streams=[stream_name])
 
     send_telegram(f"Futures EMA Bot STARTED\n{SYMBOL} {TIMEFRAME}\nSize: {QUANTITY_BTC} BTC")
 
     try:
-        while True: time.sleep(1)
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
+        print(f"[{now_str()}] Shutting down gracefully...")
         twm.stop()
+        time.sleep(2)
 
 if __name__ == "__main__":
     start_bot()
