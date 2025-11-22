@@ -119,6 +119,13 @@ def send_telegram(msg: str):
                       data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
     except: pass
 
+def send_exception_to_telegram(exc):
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": f"Exception:\n{text}"})
+    except:
+        pass
 def log_trade(event, order_id=None, entry=0, exit_p=0, profit=0, notes=""):
     ts = now_str()
     with open(LOG_FILE, "a", newline="") as f:
@@ -149,7 +156,8 @@ def start_cancel_timer(order_id: int):
                     client.futures_cancel_order(symbol=SYMBOL, orderId=order_id)
                     send_telegram(f"Cancelled unfilled LONG #{order_id}")
                     log_trade("CANCELLED", order_id, notes="timeout")
-                except: pass
+                except Exception as e:
+                    send_exception_to_telegram(e)
                 finally:
                     globals().update(limit_buy_id=None, position_open=False)
     threading.Thread(target=worker, daemon=True).start()
@@ -164,7 +172,7 @@ def place_tp(entry: float):
             symbol=SYMBOL,
             side="SELL",
             type="LIMIT",
-            quantity=QUANTITY_BTC,           # ← BTC amount directly
+            quantity=QUANTITY_BTC,
             price=str(tp_price),
             timeInForce="GTC"
         )
@@ -173,6 +181,7 @@ def place_tp(entry: float):
         log_trade("TP_PLACED", order["orderId"], entry=entry, exit_p=tp_price)
     except Exception as e:
         print("TP error:", e)
+        send_exception_to_telegram(e)
 
 
 # =============================
@@ -229,7 +238,7 @@ def user_data_handler(msg):
                     limit_buy_id = None
                     position_open = True
                     last_trade = {"type": "LONG_FILLED", "order_id": order_id, "entry": entry_price}
-                    log_trade("LONG_FILLED", order_id, entry=entry_price, qty=QUANTITY_BTC, notes="Entry filled")
+                    log_trade("LONG_FILLED", order_id, entry=entry_price, notes="Entry filled")
                     place_tp(entry_price)  # place take-profit
 
                 elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
@@ -266,8 +275,8 @@ def user_data_handler(msg):
                             client.futures_cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
                             send_telegram(f"Canceled SL limit #{stoploss_limit_id} (TP filled)")
                             log_trade("SL_CANCELLED_BY_TP", stoploss_limit_id)
-                        except:
-                            pass
+                        except Exception:
+                            send_exception_to_telegram
                         finally:
                             stoploss_limit_id = None
                             stoploss_monitor_attempts = 0
@@ -419,7 +428,7 @@ def kline_handler(msg):
 
         except Exception as e:
             print(f"[{now_str()}] BUY ORDER FAILED: {e}")
-            send_telegram(f"Buy order failed: {e}")
+            send_exception_to_telegram
             position_open = False
 
     # === STOP-LOSS LOGIC (unchanged, just cleaned) ===
@@ -429,8 +438,8 @@ def kline_handler(msg):
                 try:
                     client.futures_cancel_order(symbol=SYMBOL, orderId=tp_id)
                     send_telegram("TP cancelled due to SL trigger")
-                except:
-                    pass
+                except Exception as e:
+                    send_exception_to_telegram(e)
                 tp_id = None
 
             limit_sell_price = round(close_price + 20, PRICE_PRECISION)
@@ -448,6 +457,7 @@ def kline_handler(msg):
                 send_telegram(f"SL Triggered → Limit Sell @ {limit_sell_price}")
             except Exception as e:
                 print(f"SL limit order failed: {e}")
+                send_exception_to_telegram(e)
 
     # === SL MONITOR & MARKET FALLBACK ===
     if stoploss_limit_id:
@@ -455,8 +465,8 @@ def kline_handler(msg):
         if stoploss_monitor_attempts >= STOPLOSS_LIMIT_RETRY_MAX:
             try:
                 client.futures_cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
-            except:
-                pass
+            except Exception as e:
+                send_exception_to_telegram(e)
 
             try:
                 market_order = client.futures_create_order(
@@ -475,6 +485,7 @@ def kline_handler(msg):
 
             except Exception as e:
                 print(f"Market SL failed: {e}")
+                send_exception_to_telegram(e)
 
 # =============================
 # HEALTH & START
