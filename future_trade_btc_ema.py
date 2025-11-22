@@ -30,7 +30,7 @@ from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 # USER CONFIG
 # =============================
 SYMBOL = "BTCUSDC"                    # BTC-settled perpetual
-QUANTITY_BTC = 0.05                   # ← We pass this directly as quantity!
+QUANTITY_BTC = 0.01                   # ← We pass this directly as quantity!
 TIMEFRAME = sys.argv[1] if len(sys.argv) > 1 else "1m"
 
 EMA_FAST = 9
@@ -137,54 +137,131 @@ def place_tp(entry: float):
     except Exception as e:
         print("TP error:", e)
 
+
 # =============================
-# USER STREAM
+# USER DATA HANDLER – FUTURES (executionReport)
 # =============================
 def user_data_handler(msg):
-    global limit_buy_id, tp_id, stoploss_limit_id, entry_price, position_open
+    global limit_buy_id, tp_id, stoploss_limit_id, stoploss_monitor_attempts
+    global entry_price, position_open, total_profit_usdc, successful_trades, last_trade
 
-    if msg.get("e") != "executionReport": return
-    o = msg["o"]
-    if o.get("X") != "FILLED": return
+    try:
+        # Futures user stream wraps executionReport inside "o"
+        if msg.get("e") != "executionReport":
+            return
 
-    order_id = o["i"]
-    side = o["S"]
-    price = float(o["L"])
-    qty_btc = float(o["q"])  # this is BTC amount
+        o = msg["o"]  # order data is under "o"
+        order_id = int(o["i"])
+        status = o["X"]                    # NEW, FILLED, CANCELED, EXPIRED, etc.
+        side = o["S"]                      # BUY or SELL
+        symbol = o["s"]                    # e.g. "BTCUSDC"
 
-    with lock:
-        if limit_buy_id == order_id and side == "BUY":
-            entry_price = price
-            position_open = True
-            limit_buy_id = None
-            if cancel_event: cancel_event.set()
-            send_telegram(f"LONG FILLED @ {price:.2f}")
-            log_trade("LONG_FILLED", order_id, entry=price)
-            place_tp(price)
+        # Last executed price in this update (0 if no fill yet)
+        last_filled_price = float(o.get("L") or 0)
+        # Cumulative filled quantity (in BTC for BTCUSDC)
+        cum_filled_qty = float(o["z"])
+        orig_qty = float(o["q"])
 
-        elif tp_id == order_id and side == "SELL":
-            profit = (price - entry_price) * QUANTITY_BTC
-            global total_profit_usdc, successful_trades
-            total_profit_usdc += profit
-            successful_trades += 1
-            position_open = False
-            send_telegram(f"TP HIT @ {price:.2f} → +{profit:.2f} USDC")
-            log_trade("TP_FILLED", order_id, entry=entry_price, exit_p=price, profit=profit)
-            tp_id = None
-            entry_price = 0
+        print(f"[{now_str()}] [USER EVENT] {side} {status} #{order_id} | "
+              f"filled: {cum_filled_qty}/{orig_qty} @ {last_filled_price or 'N/A'}")
 
-        elif stoploss_limit_id == order_id and side == "SELL":
-            profit = (price - entry_price) * QUANTITY_BTC
-            total_profit_usdc += profit
-            send_telegram(f"SL filled @ {price:.2f} → {profit:+.2f} USDC")
-            log_trade("SL_FILLED", order_id, profit=profit)
-            cleanup_sl()
+        with lock:
+            # ==================================================================
+            # 1. LIMIT BUY (ENTRY)
+            # ==================================================================
+            if limit_buy_id is not None and order_id == limit_buy_id:
+                if status == "FILLED" or (status == "PARTIALLY_FILLED" and cum_filled_qty >= orig_qty * 0.999):
+                    entry_price = last_filled_price if last_filled_price else float(o["p"])  # fallback to order price
+                    print(f"[{now_str()}] [USER EVENT] LONG FILLED @ {entry_price} (order {order_id})")
+                    send_telegram(f"LONG FILLED @ {entry_price:.2f} | {QUANTITY_BTC} BTC")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    position_open = True
+                    last_trade = {"type": "LONG_FILLED", "order_id": order_id, "entry": entry_price}
+                    log_trade("LONG_FILLED", order_id, entry=entry_price, qty=QUANTITY_BTC, notes="Entry filled")
+                    place_tp(entry_price)  # place take-profit
 
-def cleanup_sl():
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[{now_str()}] [USER EVENT] Limit BUY {status} #{order_id}")
+                    send_telegram(f"Limit LONG {status} #{order_id}")
+                    if cancel_event:
+                        cancel_event.set()
+                    limit_buy_id = None
+                    position_open = False
+                    log_trade("LONG_CANCELLED", order_id, notes=f"Status: {status}")
+
+            # ==================================================================
+            # 2. TAKE PROFIT (LIMIT SELL)
+            # ==================================================================
+            elif tp_id is not None and order_id == tp_id:
+                if status == "FILLED" or (status == "PARTIALLY_FILLED" and cum_filled_qty >= orig_qty * 0.999):
+                    filled_price = last_filled_price if last_filled_price else float(o["p"])
+                    profit = (filled_price - entry_price) * QUANTITY_BTC
+                    total_profit_usdc += profit
+                    successful_trades += 1
+                    position_open = False
+
+                    print(f"[{now_str()}] [USER EVENT] TP FILLED @ {filled_price}")
+                    send_telegram(f"TP HIT @ {filled_price:.2f} → Profit: {profit:+.2f} USDC")
+                    log_trade("TP_FILLED", order_id, entry=entry_price, exit_p=filled_price,
+                              qty=QUANTITY_BTC, profit=profit, notes="Take profit")
+                    last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
+                    tp_id = None
+                    entry_price = 0.0
+
+                    # Cancel any pending SL limit if it exists
+                    if stoploss_limit_id:
+                        try:
+                            client.futures_cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
+                            send_telegram(f"Canceled SL limit #{stoploss_limit_id} (TP filled)")
+                            log_trade("SL_CANCELLED_BY_TP", stoploss_limit_id)
+                        except:
+                            pass
+                        finally:
+                            stoploss_limit_id = None
+                            stoploss_monitor_attempts = 0
+
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[{now_str()}] [USER EVENT] TP order {status} #{order_id}")
+                    send_telegram(f"TP order {status} #{order_id}")
+                    tp_id = None
+                    log_trade("TP_CANCELLED", order_id, notes=status)
+
+            # ==================================================================
+            # 3. STOP-LOSS REBOUND LIMIT SELL
+            # ==================================================================
+            elif stoploss_limit_id is not None and order_id == stoploss_limit_id:
+                if status == "FILLED" or (status == "PARTIALLY_FILLED" and cum_filled_qty >= orig_qty * 0.999):
+                    filled_price = last_filled_price if last_filled_price else float(o["p"])
+                    profit = (filled_price - entry_price) * QUANTITY_BTC
+                    total_profit_usdc += profit
+                    print(f"[{now_str()}] [USER EVENT] SL LIMIT FILLED @ {filled_price}")
+                    send_telegram(f"SL Limit Filled @ {filled_price:.2f} → P/L: {profit:+.2f} USDC")
+                    log_trade("SL_LIMIT_FILLED", order_id, entry=entry_price, exit_p=filled_price,
+                              qty=QUANTITY_BTC, profit=profit)
+                    last_trade = {"type": "SL_LIMIT", "profit": profit}
+                    cleanup_sl_state()
+
+                elif status in ["CANCELED", "EXPIRED", "REJECTED"]:
+                    print(f"[{now_str()}] [USER EVENT] SL limit {status} #{order_id}")
+                    send_telegram(f"SL limit order {status} #{order_id}")
+                    log_trade("SL_LIMIT_CANCELLED", order_id, notes=status)
+                    # Don't reset position_open here — kline handler will trigger market sell
+                    stoploss_limit_id = None
+                    stoploss_monitor_attempts = 0
+
+    except Exception as e:
+        print(f"[{now_str()}] [USER HANDLER ERROR] {e}")
+        send_exception_to_telegram(e)
+
+
+# Helper to reset SL state (used in kline handler too)
+def cleanup_sl_state():
     global stoploss_limit_id, stoploss_monitor_attempts, entry_price, position_open
     stoploss_limit_id = None
     stoploss_monitor_attempts = 0
-    entry_price = 0
+    entry_price = 0.0
     position_open = False
 
 # =============================
@@ -236,7 +313,7 @@ def kline_handler(msg):
             oid = order["orderId"]
             with lock:
                 globals().update(limit_buy_id=oid, position_open=True)
-            send_telegram(f"LIMIT LONG @ {buy_price} | {QUANTITY_BTC} BTC")
+            send_telegram(f"Buy signal detected, Placed LIMIT LONG @ {buy_price} | {QUANTITY_BTC} BTC")
             log_trade("LONG_PLACED", oid, entry=buy_price)
             start_cancel_timer(oid)
         except Exception as e:
@@ -262,7 +339,7 @@ def kline_handler(msg):
             )
             stoploss_limit_id = order["orderId"]
             stoploss_monitor_attempts = 0
-            send_telegram(f"SL → limit sell @ {limit_sell}")
+            send_telegram(f"Stop loss triggered, SL → limit sell @ {limit_sell}")
         except Exception as e:
             print("SL limit error:", e)
 
@@ -276,11 +353,11 @@ def kline_handler(msg):
                 exit_price = float(market["fills"][0]["price"])
                 profit = (exit_price - entry_price) * QUANTITY_BTC
                 total_profit_usdc += profit
-                send_telegram(f"MARKET SL @ {exit_price} → {profit:+.2f}")
+                send_telegram(f"SL didnet filled, MARKET SL @ {exit_price} → {profit:+.2f}")
                 log_trade("SL_MARKET", profit=profit)
             except Exception as e:
                 print("Market SL error:", e)
-            cleanup_sl()
+            cleanup_sl_state()
 
 # =============================
 # HEALTH & START
