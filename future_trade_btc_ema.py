@@ -23,7 +23,8 @@ except Exception:
 from flask import Flask, jsonify
 from binance import ThreadedWebsocketManager
 from binance.client import Client
-from ta.trend import EMAIndicator
+from ta.momentum import RSIIndicator
+from ta.trend import MACD, EMAIndicator
 from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 
 # =============================
