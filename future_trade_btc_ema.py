@@ -406,7 +406,7 @@ def start_bot():
 
     twm.start()
 
-    listen_key = client.futures_stream_get_listenkey()
+    listen_key = client.futures_stream_get_listen_key()   # ← underscore here
     print(f"[{now_str()}] listenKey obtained: {listen_key}")
 
     # Start the user data socket
