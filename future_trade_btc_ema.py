@@ -33,8 +33,20 @@ SYMBOL = "BTCUSDC"                    # BTC-settled perpetual
 QUANTITY_BTC = 0.01                   # ← We pass this directly as quantity!
 TIMEFRAME = sys.argv[1] if len(sys.argv) > 1 else "1m"
 
+
+
+# Indicator parameters
 EMA_FAST = 9
 EMA_SLOW = 21
+
+RSI_PERIOD = 14
+RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 70
+
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+
 TP_PCT   = 0.002      # 0.2%
 SL_PCT   = 0.01       # 1.0%
 CANCEL_AFTER = 10 * 60
@@ -42,6 +54,25 @@ KL_HISTORY_LIMIT = 50
 STOPLOSS_LIMIT_RETRY_MAX = 5
 LOG_FILE = "futures_btcusdc_log.csv"
 LOCAL_TZ = "America/Los_Angeles"
+
+STRATEGY = "EMA"          # default
+TRADE_DIRECTION = "LONG_ONLY"  # default
+
+# argv[1] = strategy, argv[2] = direction
+if len(sys.argv) > 1:
+    if sys.argv[1].upper() in ["EMA", "RSI", "MACD"]:
+        STRATEGY = sys.argv[1].upper()
+    else:
+        print(f"Invalid strategy: {sys.argv[1]} → using default EMA")
+
+if len(sys.argv) > 2:
+    if sys.argv[2].upper() in ["LONG_ONLY", "SHORT_ONLY", "BOTH"]:
+        TRADE_DIRECTION = sys.argv[2].upper()
+    else:
+        print(f"Invalid direction: {sys.argv[2]} → using default BOTH")
+
+# Print what we're running with
+print(f"[{now_str()}] Bot started → STRATEGY: {STRATEGY} | DIRECTION: {TRADE_DIRECTION}")
 
 # =============================
 # GLOBALS
@@ -278,99 +309,166 @@ def cleanup_sl_state():
     position_open = False
 
 # =============================
-# KLINE HANDLER (FIXED FOR MULTIPLEX)
+# BUY CONDITION (SEPARATE & EASY TO EXTEND)
+# =============================
+def should_buy(df: pd.DataFrame) -> bool:
+    """Return True if buy signal based on current STRATEGY"""
+    
+    if len(df) < 100:  # safety
+        return False
+
+    close = df["close"]
+
+    if STRATEGY == "EMA":
+        if "fast_ema" not in df.columns or "slow_ema" not in df.columns:
+            return False
+        fast = df["fast_ema"]
+        slow = df["slow_ema"]
+        # Golden cross on the just-closed candle
+        return fast.iloc[-3] <= slow.iloc[-3] and fast.iloc[-2] > slow.iloc[-2]
+
+    elif STRATEGY == "RSI":
+        if "rsi" not in df.columns:
+            return False
+        rsi = df["rsi"]
+        # RSI exits oversold on closed candle
+        return rsi.iloc[-3] >= RSI_OVERSOLD and rsi.iloc[-2] < RSI_OVERSOLD
+
+    elif STRATEGY == "MACD":
+        if "macd_line" not in df.columns or "signal_line" not in df.columns:
+            return False
+        macd = df["macd_line"]
+        signal = df["signal_line"]
+        # MACD crosses above signal on closed candle
+        return macd.iloc[-3] <= signal.iloc[-3] and macd.iloc[-2] > signal.iloc[-2]
+
+    return False
+
+# =============================
+# KLINE HANDLER – CLEAN & MODULAR
 # =============================
 def kline_handler(msg):
-    global klines_history, position_open, entry_price, stoploss_limit_id, stoploss_monitor_attempts
+    global klines_history, position_open, entry_price
+    global stoploss_limit_id, stoploss_monitor_attempts, tp_id
 
-    # ← FIX: Handle multiplex wrapper ('data' key)
+    # Handle multiplex socket wrapper
     if 'data' in msg:
-        inner_msg = msg['data']
+        k = msg['data'].get('k', {})
     else:
-        inner_msg = msg  # fallback for non-multiplex
+        k = msg.get('k', {})
 
-    k = inner_msg.get('k')
-    if not k: return  # invalid message
-    if not k["x"]: return  # only closed candles
-    close = float(k["c"])
+    if not k or not k.get("x", False):
+        return  # Not a closed candle → ignore
 
-    # ← TEMP DEBUG: Print first 3 messages to verify format (remove after testing)
-    if len(klines_history) < 3:
-        print(f"[{now_str()}] [DEBUG] Raw msg: {msg}")
-        print(f"[{now_str()}] [DEBUG] Inner: {inner_msg}")
-        print(f"[{now_str()}] [DEBUG] K: {k}")
-
-    klines_history.append(close)
+    close_price = float(k["c"])
+    klines_history.append(close_price)
     if len(klines_history) > KL_HISTORY_LIMIT:
         klines_history.pop(0)
 
-    if len(klines_history) < EMA_SLOW + 1: return
+    # Need enough data
+    required_len = max(EMA_SLOW, RSI_PERIOD, MACD_SLOW) + 50
+    if len(klines_history) < required_len:
+        return
 
+    # === Build DataFrame with all indicators ===
     df = pd.DataFrame({"close": klines_history})
-    df["fast"] = EMAIndicator(df["close"], EMA_FAST).ema_indicator()
-    df["slow"] = EMAIndicator(df["close"], EMA_SLOW).ema_indicator()
 
-    if df["fast"].iloc[-2] <= df["slow"].iloc[-2] and df["fast"].iloc[-1] > df["slow"].iloc[-1]:
-        if position_open: return
+    # Always compute EMA (used in many places)
+    df["fast_ema"] = EMAIndicator(df["close"], window=EMA_FAST).ema_indicator()
+    df["slow_ema"] = EMAIndicator(df["close"], window=EMA_SLOW).ema_indicator()
 
-        buy_price = round(close * 0.9995, PRICE_PRECISION)
+    # Conditional indicators (only compute if needed)
+    if STRATEGY in ["RSI", "MACD"] or True:  # or always compute for flexibility
+        df["rsi"] = RSIIndicator(df["close"], window=RSI_PERIOD).rsi()
+
+        macd = MACD(df["close"], window_slow=MACD_SLOW, window_fast=MACD_FAST, window_sign=MACD_SIGNAL)
+        df["macd_line"] = macd.macd()
+        df["signal_line"] = macd.macd_signal()
+        df["macd_hist"] = macd.macd_diff()
+
+    # === BUY SIGNAL ===
+    if not position_open and should_buy(df):
+        buy_price = round(close_price * 0.9995, PRICE_PRECISION)  # slight discount
+
         try:
             order = client.futures_create_order(
                 symbol=SYMBOL,
                 side="BUY",
                 type="LIMIT",
-                quantity=QUANTITY_BTC,        # ← BTC amount directly
+                quantity=QUANTITY_BTC,
                 price=str(buy_price),
                 timeInForce="GTC"
             )
-            oid = order["orderId"]
+            order_id = order["orderId"]
+
             with lock:
-                globals().update(limit_buy_id=oid, position_open=True)
-            send_telegram(f"Buy signal detected, Placed LIMIT LONG @ {buy_price} | {QUANTITY_BTC} BTC")
-            log_trade("LONG_PLACED", oid, entry=buy_price)
-            start_cancel_timer(oid)
+                globals().update(
+                    limit_buy_id=order_id,
+                    position_open=True
+                )
+
+            send_telegram(f"BUY SIGNAL ({STRATEGY})\nLIMIT LONG @ {buy_price}\nSize: {QUANTITY_BTC} BTC")
+            log_trade("LONG_PLACED", order_id, entry=buy_price, strategy=STRATEGY)
+            start_cancel_timer(order_id)
+
         except Exception as e:
-            print("Buy error:", e)
+            print(f"[{now_str()}] BUY ORDER FAILED: {e}")
+            send_telegram(f"Buy order failed: {e}")
             position_open = False
 
-    # SL monitoring
-    if position_open and entry_price and close <= entry_price * (1 - SL_PCT) and not stoploss_limit_id:
-        if tp_id:
-            try: client.futures_cancel_order(symbol=SYMBOL, orderId=tp_id)
-            except: pass
-            globals()['tp_id'] = None
+    # === STOP-LOSS LOGIC (unchanged, just cleaned) ===
+    if position_open and entry_price and close_price <= entry_price * (1 - SL_PCT):
+        if not stoploss_limit_id:
+            if tp_id:
+                try:
+                    client.futures_cancel_order(symbol=SYMBOL, orderId=tp_id)
+                    send_telegram("TP cancelled due to SL trigger")
+                except:
+                    pass
+                tp_id = None
 
-        limit_sell = round(close + 20, PRICE_PRECISION)
-        try:
-            order = client.futures_create_order(
-                symbol=SYMBOL,
-                side="SELL",
-                type="LIMIT",
-                quantity=QUANTITY_BTC,
-                price=str(limit_sell),
-                timeInForce="GTC"
-            )
-            stoploss_limit_id = order["orderId"]
-            stoploss_monitor_attempts = 0
-            send_telegram(f"Stop loss triggered, SL → limit sell @ {limit_sell}")
-        except Exception as e:
-            print("SL limit error:", e)
+            limit_sell_price = round(close_price + 20, PRICE_PRECISION)
+            try:
+                sl_order = client.futures_create_order(
+                    symbol=SYMBOL,
+                    side="SELL",
+                    type="LIMIT",
+                    quantity=QUANTITY_BTC,
+                    price=str(limit_sell_price),
+                    timeInForce="GTC"
+                )
+                stoploss_limit_id = sl_order["orderId"]
+                stoploss_monitor_attempts = 0
+                send_telegram(f"SL Triggered → Limit Sell @ {limit_sell_price}")
+            except Exception as e:
+                print(f"SL limit order failed: {e}")
 
+    # === SL MONITOR & MARKET FALLBACK ===
     if stoploss_limit_id:
         stoploss_monitor_attempts += 1
         if stoploss_monitor_attempts >= STOPLOSS_LIMIT_RETRY_MAX:
-            try: client.futures_cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
-            except: pass
             try:
-                market = client.futures_create_order(symbol=SYMBOL, side="SELL", type="MARKET", quantity=QUANTITY_BTC)
-                exit_price = float(market["fills"][0]["price"])
+                client.futures_cancel_order(symbol=SYMBOL, orderId=stoploss_limit_id)
+            except:
+                pass
+
+            try:
+                market_order = client.futures_create_order(
+                    symbol=SYMBOL, side="SELL", type="MARKET", quantity=QUANTITY_BTC
+                )
+                fills = market_order.get("fills", [])
+                exit_price = float(fills[0]["price"]) if fills else close_price
                 profit = (exit_price - entry_price) * QUANTITY_BTC
+
+                global total_profit_usdc
                 total_profit_usdc += profit
-                send_telegram(f"SL didnet filled, MARKET SL @ {exit_price} → {profit:+.2f}")
-                log_trade("SL_MARKET", profit=profit)
+
+                send_telegram(f"MARKET STOP-LOSS @ {exit_price}\nP&L: {profit:+.2f} USDC")
+                log_trade("SL_MARKET", profit=profit, exit_p=exit_price)
+                cleanup_sl_state()
+
             except Exception as e:
-                print("Market SL error:", e)
-            cleanup_sl_state()
+                print(f"Market SL failed: {e}")
 
 # =============================
 # HEALTH & START
