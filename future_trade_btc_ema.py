@@ -387,44 +387,15 @@ def health():
             "pnl_usdc": round(total_profit_usdc, 2)
         })
 
-# At the top of your file (with other globals)
-user_stream_thread = None   # We'll store the thread here
-
-def keep_alive_and_auto_restart():
-    global user_stream_thread   # ← Declare FIRST, before any use!
-
-    current_listen_key = None
-
+def keep_alive_listen_key(listen_key):
     while True:
+        time.sleep(1800)  # 30 minutes
         try:
-            if current_listen_key is None:
-                current_listen_key = client.futures_stream_get_listenkey()
-                print(f"[{now_str()}] New listenKey: {current_listen_key[-20:]}...")
-
-                # Now safe: we declared global first
-                if user_stream_thread:
-                    try:
-                        twm.stop_socket(user_stream_thread)
-                        print(f"[{now_str()}] Old user stream socket stopped")
-                    except:
-                        pass
-
-                # Start new one and save the handle
-                user_stream_thread = twm.start_futures_user_socket(
-                    callback=user_data_handler,
-                    listen_key=current_listen_key
-                )
-                send_telegram("User data stream started/reconnected")
-
-            time.sleep(1800)
-            client.futures_stream_keepalive(listenKey=current_listen_key)
-            print(f"[{now_str()}] listenKey renewed")
-
+            client.futures_stream_keepalive(listenKey=listen_key)   # ← correct method name!
+            print(f"[{now_str()}] User stream listenKey renewed")
         except Exception as e:
-            print(f"[{now_str()}] User stream error: {e} → reconnecting...")
-            send_telegram(f"User stream failed → reconnecting...\n{e}")
-            current_listen_key = None
-            time.sleep(10)
+            print(f"[{now_str()}] Failed to renew listenKey: {e}")
+            send_telegram(f"listenKey renewal failed: {e}")
 
 def start_bot():
     print(f"[{now_str()}] Starting BTCUSDC Futures EMA Bot – {QUANTITY_BTC} BTC per trade")
@@ -435,8 +406,14 @@ def start_bot():
 
     twm.start()
 
-    # === USER DATA STREAM WITH AUTO-RECONNECT ===
-    threading.Thread(target=keep_alive_and_auto_restart, daemon=True).start()
+    listen_key = client.futures_stream_get_listenkey()
+    print(f"[{now_str()}] listenKey obtained: {listen_key}")
+
+    # Start the user data socket
+    twm.start_futures_user_socket(callback=user_data_handler, listen_key=listen_key)
+    # ←←← ADD THIS LINE – this is all you need! ←←←
+    threading.Thread(target=keep_alive_listen_key, args=(listen_key,), daemon=True).start()
+
 
     # === KLINE STREAM ===
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
