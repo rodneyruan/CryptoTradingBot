@@ -387,15 +387,22 @@ def health():
             "pnl_usdc": round(total_profit_usdc, 2)
         })
 
-def keep_alive_listen_key(listen_key):
+def keep_alive_listen_key():
+    current_listen_key = None  # Will fetch on first run
+    
     while True:
-        time.sleep(1800)  # 30 minutes
+        if current_listen_key is None:
+            current_listen_key = client.futures_stream_get_listen_key()
+            print(f"[{now_str()}] Fresh listenKey fetched: {current_listen_key[-20:]}...")
+        
+        time.sleep(60)  # 30 minutes
         try:
-            client.futures_stream_keepalive(listenKey=listen_key)   # ← correct method name!
+            client.futures_stream_keepalive(listenKey=current_listen_key)
             print(f"[{now_str()}] User stream listenKey renewed")
         except Exception as e:
             print(f"[{now_str()}] Failed to renew listenKey: {e}")
             send_telegram(f"listenKey renewal failed: {e}")
+            current_listen_key = None  # Reset → will refetch next loop
 
 def start_bot():
     print(f"[{now_str()}] Starting BTCUSDC Futures EMA Bot – {QUANTITY_BTC} BTC per trade")
@@ -406,14 +413,10 @@ def start_bot():
 
     twm.start()
 
-    listen_key = client.futures_stream_get_listen_key()   # ← underscore here
-    print(f"[{now_str()}] listenKey obtained: {listen_key}")
-
     # Start the user data socket
-    twm.start_futures_user_socket(callback=user_data_handler, listen_key=listen_key)
+    twm.start_futures_user_socket(callback=user_data_handler)
     # ←←← ADD THIS LINE – this is all you need! ←←←
-    threading.Thread(target=keep_alive_listen_key, args=(listen_key,), daemon=True).start()
-
+    threading.Thread(target=keep_alive_listen_key, daemon=True).start()  # ← No args now
 
     # === KLINE STREAM ===
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
