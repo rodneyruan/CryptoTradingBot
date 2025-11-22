@@ -414,7 +414,7 @@ def kline_handler(msg):
                 )
 
             send_telegram(f"BUY SIGNAL ({STRATEGY})\nLIMIT LONG @ {buy_price}\nSize: {QUANTITY_BTC} BTC")
-            log_trade("LONG_PLACED", order_id, entry=buy_price, strategy=STRATEGY)
+            log_trade("LONG_PLACED", order_id, entry=buy_price)
             start_cancel_timer(order_id)
 
         except Exception as e:
