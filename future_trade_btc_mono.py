@@ -71,8 +71,6 @@ def now_str():
         return datetime.now(ZoneInfo(LOCAL_TZ)).strftime("%Y-%m-%d %H:%M:%S")
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# Print what we're running with
-print(f"[{now_str()}] Bot started → STRATEGY: {STRATEGY} | DIRECTION: {TRADE_DIRECTION}")
 
 # =============================
 # GLOBALS
@@ -583,7 +581,7 @@ def keep_alive_listen_key():
             current_listen_key = None  # Reset → will refetch next loop
 
 def start_bot():
-    print(f"[{now_str()}] Starting {SYMBOL} Futures Trading Bot: {STRATEGY}}  – {QUANTITY_BTC} {TIMEFRAME}  ")
+    print(f"[{now_str()}] Starting {SYMBOL} Futures Trading Bot: {STRATEGY} {QUANTITY_BTC} {TIMEFRAME}  ")
     init_klines()
 
     # Flask (if any)
@@ -600,7 +598,7 @@ def start_bot():
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
     twm.start_futures_multiplex_socket(callback=kline_handler, streams=[stream_name])
 
-    send_telegram(f"Futures EMA Bot STARTED\n{SYMBOL} {TIMEFRAME}\nSize: {QUANTITY_BTC} BTC")
+    send_telegram(f"Futures Bot STARTED {SYMBOL} {TIMEFRAME}  Size: {QUANTITY_BTC} BTC")
 
     try:
         while True:
