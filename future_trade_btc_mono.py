@@ -432,7 +432,8 @@ def kline_handler(msg):
 
     close_price = float(k["c"])
     close_time = k["T"]
-    print(f"[{now_str()}] KLINE CLOSED @ {close_price} | Time: {datetime.fromtimestamp(close_time/1000,tz=pytz.timezone('America/Los_Angeles')).strftime('%Y-%m-%d %H:%M:%S')}")
+    if datetime.now().minute % 5 == 0:
+        print(f"[{now_str()}] KLINE CLOSED @ {close_price} | Time: {datetime.fromtimestamp(close_time/1000,tz=pytz.timezone('America/Los_Angeles')).strftime('%Y-%m-%d %H:%M:%S')}")
 
     klines_history.append(close_price)
     if len(klines_history) > KL_HISTORY_LIMIT:
@@ -460,6 +461,10 @@ def kline_handler(msg):
         df["signal_line"] = macd.macd_signal()
         df["macd_hist"] = macd.macd_diff()
 
+    if datetime.now().minute % 5 == 0:
+        print(f"[{now_str()}] Latest indicators | Close: {close_price} | "
+              f"Fast EMA: {df['fast_ema'].iloc[-1]:.2f} | Slow EMA: {df['slow_ema'].iloc[-1]:.2f} | "
+              f"RSI: {df['rsi'].iloc[-1]:.2f} | MACD: {df['macd_line'].iloc[-1]:.2f} | Signal: {df['signal_line'].iloc[-1]:.2f}")
     # === BUY SIGNAL ===
     if not position_open and should_buy(df):
         buy_price = round(close_price * 0.9995, PRICE_PRECISION)  # slight discount
