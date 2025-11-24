@@ -365,7 +365,7 @@ def should_buy(df: pd.DataFrame) -> bool:
         return False
     #=== 2. Price above EMA50 ===
     if "ema50" in df.columns and close.iloc[-1] < df["ema50"].iloc[-1]:
-        print(f"[{now_str()}] Price below EMA50: {close.iloc[-1]:.2f} < {df['ema50'].iloc[-1]:.2f}")
+
         return False
 
     if STRATEGY == "EMA":
