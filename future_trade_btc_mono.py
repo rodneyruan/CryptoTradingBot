@@ -5,6 +5,7 @@ Futures EMA Bot – BTCUSDC Perpetual
 → Works perfectly with current python-binance (1.0.19 / 2.x)
 → No leverage change, no contract conversion needed
 """
+# Usage filename.py EMA 0.01 1m
 
 import time
 import threading
