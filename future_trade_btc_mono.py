@@ -515,9 +515,9 @@ def kline_handler(msg):
                 )
                 stoploss_limit_id = sl_order["orderId"]
                 stoploss_monitor_attempts = 0
-                send_telegram(f"SL Triggered → Limit Sell @ {limit_sell_price} Stop-loss trades: {stop_lossed_trades}")
+                send_telegram(f"{STRATEGY} SL Triggered → Limit Sell @ {limit_sell_price} Stop-loss trades: {stop_lossed_trades}")
             except Exception as e:
-                print(f"SL limit order failed: {e}")
+                print(f"{STRATEGY} SL limit order failed: {e}")
                 send_exception_to_telegram(e)
 
     # === SL MONITOR & MARKET FALLBACK ===
@@ -540,12 +540,12 @@ def kline_handler(msg):
                 global total_profit_usdc
                 total_profit_usdc += profit
 
-                send_telegram(f"MARKET STOP-LOSS @ {exit_price}\nP&L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, Stop-loss trades: {stop_lossed_trades}, total trades: {successful_trades + stop_lossed_trades}  ")
+                send_telegram(f"{STRATEGY} MARKET STOP-LOSS @ {exit_price}\nP&L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, Stop-loss trades: {stop_lossed_trades}, total trades: {successful_trades + stop_lossed_trades}  ")
                 log_trade("SL_MARKET", profit=profit, exit_p=exit_price)
                 cleanup_sl_state()
 
             except Exception as e:
-                print(f"Market SL failed: {e}")
+                print(f"{STRATEGY} Market SL failed: {e}")
                 send_exception_to_telegram(e)
 
 # =============================
@@ -598,7 +598,7 @@ def start_bot():
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
     twm.start_futures_multiplex_socket(callback=kline_handler, streams=[stream_name])
 
-    send_telegram(f"Futures Bot STARTED {SYMBOL} {TIMEFRAME}  Size: {QUANTITY_BTC} BTC")
+    send_telegram(f"Futures Bot STARTED\n{SYMBOL} {TIMEFRAME}\nSize: {QUANTITY_BTC} BTC")
 
     try:
         while True:
