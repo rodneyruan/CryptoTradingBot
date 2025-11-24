@@ -39,6 +39,7 @@ TIMEFRAME =  "1m"
 # Indicator parameters
 EMA_FAST = 9
 EMA_SLOW = 21
+EMA_50 = 50
 
 RSI_PERIOD = 14
 RSI_OVERSOLD = 30
@@ -94,6 +95,7 @@ entry_price = 0.0
 position_open = False
 total_profit_usdc = 0.0
 successful_trades = 0
+stop_lossed_trades = 0
 klines_history = []
 lock = threading.Lock()
 app = Flask(__name__)
@@ -182,7 +184,7 @@ def place_tp(entry: float):
 # =============================
 def user_data_handler(msg):
     global limit_buy_id, tp_id, stoploss_limit_id, stoploss_monitor_attempts
-    global entry_price, position_open, total_profit_usdc, successful_trades, last_trade
+    global entry_price, position_open, total_profit_usdc, successful_trades, last_trade,stop_lossed_trades
 
     try:
         # Debug: always print raw message first few times
@@ -255,7 +257,7 @@ def user_data_handler(msg):
                     position_open = False
 
                     print(f"[{now_str()}] [USER EVENT] TP FILLED @ {filled_price}")
-                    send_telegram(f"TP HIT @ {filled_price:.2f} → Profit: {profit:+.2f} USDC")
+                    send_telegram(f"{STRATEGY}TP HIT @ {filled_price:.2f} → Profit: {profit:+.2f} successful trades: {successful_trades}, Total P/L: {total_profit_usdc:+.2f} USDC")
                     log_trade("TP_FILLED", order_id, entry=entry_price, exit_p=filled_price,
                             profit=profit, notes="Take profit")
                     last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
@@ -315,6 +317,40 @@ def cleanup_sl_state():
     entry_price = 0.0
     position_open = False
 
+def is_htf_trend_bullish(timeframe: str = "5m") -> bool:
+    """
+    Check if EMA50 > EMA200 on the specified higher timeframe.
+    
+    Args:
+        timeframe (str): Binance interval, e.g. "5m", "15m", "1h", "4h", "1d"
+    
+    Returns:
+        True  → Bullish trend (EMA50 > EMA200)
+        False → Bearish or neutral
+    """
+    try:
+        # Pull enough data for EMA200 + some buffer
+        limit_needed = 300
+        klines = client.futures_klines(
+            symbol=SYMBOL,
+            interval=timeframe,
+            limit=limit_needed
+        )
+
+        # Convert to DataFrame (only close price needed)
+        closes = [float(k[4]) for k in klines]  # index 4 = close
+        df = pd.DataFrame({"close": closes})
+
+        # Calculate EMA50 and EMA200
+        ema50  = EMAIndicator(df["close"], window=50).ema_indicator().iloc[-1]
+        ema200 = EMAIndicator(df["close"], window=200).ema_indicator().iloc[-1]
+
+        return ema50 > ema200
+
+    except Exception as e:
+        print(f"[{now_str()}] HTF trend check failed ({timeframe}): {e}")
+        return True  # or False — True = allow trade if API fails (safer default)
+
 # =============================
 # BUY CONDITION (SEPARATE & EASY TO EXTEND)
 # =============================
@@ -326,20 +362,43 @@ def should_buy(df: pd.DataFrame) -> bool:
 
     close = df["close"]
 
+    # === 1. RSI not overbought ===
+    if "rsi" in df.columns and df["rsi"].iloc[-1] > 70:
+        return False
+    #=== 2. Price above EMA50 ===
+    if "ema50" in df.columns and close.iloc[-1] < df["ema50"].iloc[-1]:
+        return False
+
     if STRATEGY == "EMA":
         if "fast_ema" not in df.columns or "slow_ema" not in df.columns:
             return False
         fast = df["fast_ema"]
         slow = df["slow_ema"]
-        # Golden cross on the just-closed candle
-        return fast.iloc[-3] <= slow.iloc[-3] and fast.iloc[-2] > slow.iloc[-2]
+        #1  Golden cross on the just-closed candle
+        if not (fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1]):
+            return False
+        # 3. confirm HTF trend is bullish
+        # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
+        if not is_htf_trend_bullish("5m"):
+            send_telegram("EMA Golden Cross detected, but HTF trend not bullish")
+            return False
+        send_telegram("Buy signal confirmed: EMA Golden Cross + HTF bullish")
 
+        return True
     elif STRATEGY == "RSI":
         if "rsi" not in df.columns:
             return False
         rsi = df["rsi"]
         # RSI exits oversold on closed candle
-        return rsi.iloc[-3] >= RSI_OVERSOLD and rsi.iloc[-2] < RSI_OVERSOLD
+        if not rsi.iloc[-1] >= RSI_OVERSOLD and rsi.iloc[-2] < RSI_OVERSOLD:
+            return False
+        # 3. confirm HTF trend is bullish
+        # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
+        if not is_htf_trend_bullish("5m"):
+            send_telegram("RSI buy signal detected, but HTF trend not bullish")
+            return False
+        send_telegram("Buy signal confirmed: RSI exit oversold + HTF bullish")
+        return True
 
     elif STRATEGY == "MACD":
         if "macd_line" not in df.columns or "signal_line" not in df.columns:
@@ -347,7 +406,14 @@ def should_buy(df: pd.DataFrame) -> bool:
         macd = df["macd_line"]
         signal = df["signal_line"]
         # MACD crosses above signal on closed candle
-        return macd.iloc[-3] <= signal.iloc[-3] and macd.iloc[-2] > signal.iloc[-2]
+        if not macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]:
+            return False
+        # 3. confirm HTF trend is bullish
+        if not is_htf_trend_bullish("5m"):
+            send_telegram("MACD buy signal detected, but HTF trend not bullish")
+            return False
+        send_telegram("Buy signal confirmed: MACD crossover + HTF bullish")
+        return True
 
     return False
 
@@ -356,7 +422,7 @@ def should_buy(df: pd.DataFrame) -> bool:
 # =============================
 def kline_handler(msg):
     global klines_history, position_open, entry_price
-    global stoploss_limit_id, stoploss_monitor_attempts, tp_id
+    global stoploss_limit_id, stoploss_monitor_attempts, tp_id,stop_lossed_trades
 
     # Handle multiplex socket wrapper
     if 'data' in msg:
@@ -386,6 +452,7 @@ def kline_handler(msg):
     # Always compute EMA (used in many places)
     df["fast_ema"] = EMAIndicator(df["close"], window=EMA_FAST).ema_indicator()
     df["slow_ema"] = EMAIndicator(df["close"], window=EMA_SLOW).ema_indicator()
+    df["ema50"] = EMAIndicator(df["close"], window=EMA_50).ema_indicator()
 
     # Conditional indicators (only compute if needed)
     if STRATEGY in ["RSI", "MACD"] or True:  # or always compute for flexibility
@@ -438,6 +505,7 @@ def kline_handler(msg):
                 tp_id = None
 
             limit_sell_price = round(close_price + 20, PRICE_PRECISION)
+            stop_lossed_trades += 1
             try:
                 sl_order = client.futures_create_order(
                     symbol=SYMBOL,
@@ -449,7 +517,7 @@ def kline_handler(msg):
                 )
                 stoploss_limit_id = sl_order["orderId"]
                 stoploss_monitor_attempts = 0
-                send_telegram(f"SL Triggered → Limit Sell @ {limit_sell_price}")
+                send_telegram(f"SL Triggered → Limit Sell @ {limit_sell_price} Stop-loss trades: {stop_lossed_trades}")
             except Exception as e:
                 print(f"SL limit order failed: {e}")
                 send_exception_to_telegram(e)
@@ -474,7 +542,7 @@ def kline_handler(msg):
                 global total_profit_usdc
                 total_profit_usdc += profit
 
-                send_telegram(f"MARKET STOP-LOSS @ {exit_price}\nP&L: {profit:+.2f} USDC")
+                send_telegram(f"MARKET STOP-LOSS @ {exit_price}\nP&L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, Stop-loss trades: {stop_lossed_trades}, total trades: {successful_trades + stop_lossed_trades}  ")
                 log_trade("SL_MARKET", profit=profit, exit_p=exit_price)
                 cleanup_sl_state()
 
@@ -515,7 +583,7 @@ def keep_alive_listen_key():
             current_listen_key = None  # Reset → will refetch next loop
 
 def start_bot():
-    print(f"[{now_str()}] Starting BTCUSDC Futures EMA Bot – {QUANTITY_BTC} BTC per trade")
+    print(f"[{now_str()}] Starting {SYMBOL} Futures Trading Bot: {STRATEGY}}  – {QUANTITY_BTC} {TIMEFRAME}  ")
     init_klines()
 
     # Flask (if any)
