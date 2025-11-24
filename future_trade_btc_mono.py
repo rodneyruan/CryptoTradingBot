@@ -188,7 +188,7 @@ def user_data_handler(msg):
         # Debug: always print raw message first few times
         if not hasattr(user_data_handler, "debug_count"):
             user_data_handler.debug_count = 0
-        if user_data_handler.debug_count < 10:
+        if user_data_handler.debug_count < 1:
             print(f"[RAW USER MSG] {msg}")
             user_data_handler.debug_count += 1
 
@@ -381,14 +381,13 @@ def should_buy(df: pd.DataFrame) -> bool:
             send_telegram("EMA Golden Cross detected, but HTF trend not bullish")
             return False
         send_telegram("Buy signal confirmed: EMA Golden Cross + HTF bullish")
-
         return True
     elif STRATEGY == "RSI":
         if "rsi" not in df.columns:
             return False
         rsi = df["rsi"]
         # RSI exits oversold on closed candle
-        if not rsi.iloc[-1] >= RSI_OVERSOLD and rsi.iloc[-2] < RSI_OVERSOLD:
+        if not (rsi.iloc[-2] <= RSI_OVERSOLD and rsi.iloc[-1] > RSI_OVERSOLD):
             return False
         # 3. confirm HTF trend is bullish
         # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
@@ -404,7 +403,7 @@ def should_buy(df: pd.DataFrame) -> bool:
         macd = df["macd_line"]
         signal = df["signal_line"]
         # MACD crosses above signal on closed candle
-        if not macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]:
+        if not (macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]):
             return False
         # 3. confirm HTF trend is bullish
         if not is_htf_trend_bullish("5m"):
@@ -598,7 +597,7 @@ def start_bot():
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
     twm.start_futures_multiplex_socket(callback=kline_handler, streams=[stream_name])
 
-    send_telegram(f"Futures Bot STARTED\n{SYMBOL} {TIMEFRAME}\nSize: {QUANTITY_BTC} BTC")
+    send_telegram(f"Futures Bot STARTED\n{STRATEGY} {SYMBOL} {TIMEFRAME}\nSize: {QUANTITY_BTC} BTC")
 
     try:
         while True:
