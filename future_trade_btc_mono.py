@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Futures EMA Bot – BTCUSDC Perpetual
-→ quantity = 0.05 means 0.05 BTC (NOT contracts)
+→ Uses python-binance ThreadedWebsocketManager with futures_user_socket
 → Works perfectly with current python-binance (1.0.19 / 2.x)
 → No leverage change, no contract conversion needed
 """
@@ -14,7 +14,7 @@ import csv
 import traceback
 import sys
 from datetime import datetime
-
+import pytz
 try:
     from zoneinfo import ZoneInfo
 except Exception:
@@ -33,7 +33,6 @@ from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 SYMBOL = "BTCUSDC"                    # BTC-settled perpetual
 QUANTITY_BTC = 0.01                   # ← We pass this directly as quantity!
 TIMEFRAME =  "1m"
-
 
 
 # Indicator parameters
@@ -57,20 +56,13 @@ LOG_FILE = "futures_btcusdc_log.csv"
 LOCAL_TZ = "America/Los_Angeles"
 
 STRATEGY = "EMA"          # default
-TRADE_DIRECTION = "LONG_ONLY"  # default
+TRADE_DIRECTION = "LONG"  # default
 
-# argv[1] = strategy, argv[2] = direction
-if len(sys.argv) > 1:
-    if sys.argv[1].upper() in ["EMA", "RSI", "MACD"]:
-        STRATEGY = sys.argv[1].upper()
-    else:
-        print(f"Invalid strategy: {sys.argv[1]} → using default EMA")
 
-if len(sys.argv) > 2:
-    if sys.argv[2].upper() in ["LONG_ONLY", "SHORT_ONLY", "BOTH"]:
-        TRADE_DIRECTION = sys.argv[2].upper()
-    else:
-        print(f"Invalid direction: {sys.argv[2]} → using default BOTH")
+STRATEGY = sys.argv[1].upper() if len(sys.argv) > 1 else"EMA"
+QUANTITY_BTC = float(sys.argv[2]) if len(sys.argv) > 2 else 0.01
+TIMEFRAME =  sys.argv[3] if len(sys.argv) > 3 else"1m"
+
 
 def now_str():
     if ZoneInfo:
@@ -375,6 +367,9 @@ def kline_handler(msg):
         return  # Not a closed candle → ignore
 
     close_price = float(k["c"])
+    close_time = k["T"]
+    print(f"[{now_str()}] KLINE CLOSED @ {close_price} | Time: {datetime.fromtimestamp(close_time/1000,tz=pytz.timezone('America/Los_Angeles')).strftime('%Y-%m-%d %H:%M:%S')}")
+
     klines_history.append(close_price)
     if len(klines_history) > KL_HISTORY_LIMIT:
         klines_history.pop(0)
