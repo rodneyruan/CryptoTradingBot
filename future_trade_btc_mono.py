@@ -364,8 +364,7 @@ def should_buy(df: pd.DataFrame) -> bool:
     if "rsi" in df.columns and df["rsi"].iloc[-1] > 70:
         return False
     #=== 2. Price above EMA50 ===
-    if "ema50" in df.columns and close.iloc[-1] < df["ema50"].iloc[-1]:
-
+    if STRATEGY != "RSI" and "ema50" in df.columns and close.iloc[-1] < df["ema50"].iloc[-1]:
         return False
 
     if STRATEGY == "EMA":
