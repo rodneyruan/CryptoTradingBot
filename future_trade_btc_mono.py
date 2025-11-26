@@ -378,9 +378,9 @@ def should_buy(df: pd.DataFrame) -> bool:
             return False
         # 3. confirm HTF trend is bullish
         # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
-        if not is_htf_trend_bullish("5m"):
+        '''if not is_htf_trend_bullish("5m"):
             send_telegram("EMA Golden Cross detected, but HTF trend not bullish")
-            return False
+            return False'''
         send_telegram("Buy signal confirmed: EMA Golden Cross + HTF bullish")
         return True
     elif STRATEGY == "RSI":
@@ -392,9 +392,9 @@ def should_buy(df: pd.DataFrame) -> bool:
             return False
         # 3. confirm HTF trend is bullish
         # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
-        if not is_htf_trend_bullish("5m"):
+        '''if not is_htf_trend_bullish("5m"):
             send_telegram("RSI buy signal detected, but HTF trend not bullish")
-            return False
+            return False'''
         send_telegram("Buy signal confirmed: RSI exit oversold + HTF bullish")
         return True
 
@@ -407,9 +407,9 @@ def should_buy(df: pd.DataFrame) -> bool:
         if not (macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]):
             return False
         # 3. confirm HTF trend is bullish
-        if not is_htf_trend_bullish("5m"):
+        '''if not is_htf_trend_bullish("5m"):
             send_telegram("MACD buy signal detected, but HTF trend not bullish")
-            return False
+            return False'''
         send_telegram("Buy signal confirmed: MACD crossover + HTF bullish")
         return True
 
