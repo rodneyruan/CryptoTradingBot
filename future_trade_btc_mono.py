@@ -33,7 +33,14 @@ from key_config import apikey, apisecret, TELEGRAM_TOKEN, CHAT_ID
 # =============================
 SYMBOL = "BTCUSDC"                    # BTC-settled perpetual
 QUANTITY_BTC = 0.01                   # ← We pass this directly as quantity!
-TIMEFRAME =  "1m"
+TIMEFRAME =  "3m"
+STRATEGY = "RSI"          # default
+TRADE_DIRECTION = "LONG"  # default
+
+
+STRATEGY = sys.argv[1].upper() if len(sys.argv) > 1 else"RSI"
+QUANTITY_BTC = float(sys.argv[2]) if len(sys.argv) > 2 else 0.01
+TIMEFRAME =  sys.argv[3] if len(sys.argv) > 3 else"3m"
 
 
 # Indicator parameters
@@ -41,15 +48,15 @@ EMA_FAST = 9
 EMA_SLOW = 21
 EMA_50 = 50
 
-RSI_PERIOD = 14
-RSI_OVERSOLD = 30
+RSI_PERIOD = 7
+RSI_OVERSOLD = 19
 RSI_OVERBOUGHT = 70
 
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIGNAL = 9
 
-TP_PCT   = 0.002      # 0.2%
+TP_PCT   = 0.0025 if STRATEGY == "RSI" else 0.002     # 0.2%
 SL_PCT   = 0.01       # 1.0%
 CANCEL_AFTER = 10 * 60
 KL_HISTORY_LIMIT = 500
@@ -57,13 +64,7 @@ STOPLOSS_LIMIT_RETRY_MAX = 5
 LOG_FILE = "futures_btcusdc_log.csv"
 LOCAL_TZ = "America/Los_Angeles"
 
-STRATEGY = "EMA"          # default
-TRADE_DIRECTION = "LONG"  # default
 
-
-STRATEGY = sys.argv[1].upper() if len(sys.argv) > 1 else"EMA"
-QUANTITY_BTC = float(sys.argv[2]) if len(sys.argv) > 2 else 0.01
-TIMEFRAME =  sys.argv[3] if len(sys.argv) > 3 else"1m"
 
 
 def now_str():
