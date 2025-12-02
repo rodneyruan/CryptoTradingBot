@@ -52,12 +52,15 @@ RSI_PERIOD = 7
 RSI_OVERSOLD = 19
 RSI_OVERBOUGHT = 70
 
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIGNAL = 9
+MACD_FAST = 8
+MACD_SLOW = 21
+MACD_SIGNAL = 5
 
-TP_PCT   = 0.0025 if STRATEGY == "RSI" else 0.002     # 0.2%
-SL_PCT   = 0.01       # 1.0%
+TP_PCT   = 0.0022
+TP_PCT   = 0.0023 if STRATEGY == "MACD"
+TP_PCT   = 0.0023 if STRATEGY == "RSI"
+
+SL_PCT   = 0.006       # 0.6%
 CANCEL_AFTER = 10 * 60
 KL_HISTORY_LIMIT = 500
 STOPLOSS_LIMIT_RETRY_MAX = 5
@@ -148,7 +151,7 @@ def start_cancel_timer(order_id: int):
             if limit_buy_id == order_id:
                 try:
                     client.futures_cancel_order(symbol=SYMBOL, orderId=order_id)
-                    send_telegram(f"Cancelled unfilled LONG #{order_id}")
+                    send_telegram(f"[{STRATEGY}] Cancelled unfilled LONG #{order_id}")
                     log_trade("CANCELLED", order_id, notes="timeout")
                 except Exception as e:
                     send_exception_to_telegram(e)
@@ -171,7 +174,7 @@ def place_tp(entry: float):
             timeInForce="GTC"
         )
         globals()['tp_id'] = order["orderId"]
-        send_telegram(f"TP placed @ {tp_price}")
+        send_telegram(f"[{STRATEGY}]  TP placed @ {tp_price}")
         log_trade("TP_PLACED", order["orderId"], entry=entry, exit_p=tp_price)
     except Exception as e:
         print("TP error:", e)
@@ -226,7 +229,7 @@ def user_data_handler(msg):
                 if status == "FILLED" or (status == "PARTIALLY_FILLED" and cum_filled_qty >= orig_qty * 0.999):
                     entry_price = last_filled_price if last_filled_price else float(o["p"])  # fallback to order price
                     print(f"[{now_str()}] [USER EVENT] LONG FILLED @ {entry_price} (order {order_id})")
-                    send_telegram(f"LONG FILLED @ {entry_price:.2f} | {QUANTITY_BTC} BTC")
+                    send_telegram(f"[{STRATEGY}] LONG FILLED @ {entry_price:.2f} | {QUANTITY_BTC} BTC")
                     if cancel_event:
                         cancel_event.set()
                     limit_buy_id = None
@@ -256,7 +259,7 @@ def user_data_handler(msg):
                     position_open = False
 
                     print(f"[{now_str()}] [USER EVENT] TP FILLED @ {filled_price}")
-                    send_telegram(f"{STRATEGY}TP HIT @ {filled_price:.2f} → Profit: {profit:+.2f} successful trades: {successful_trades}, Total P/L: {total_profit_usdc:+.2f} USDC")
+                    send_telegram(f"[{STRATEGY}] ====> Taking profit @ {filled_price:.2f} → Profit: {profit:+.2f} successful trades: {successful_trades},stop-loss-trades:{stop_lossed_trades}, Total P/L: {total_profit_usdc:+.2f} USDC")
                     log_trade("TP_FILLED", order_id, entry=entry_price, exit_p=filled_price,
                             profit=profit, notes="Take profit")
                     last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
@@ -290,7 +293,7 @@ def user_data_handler(msg):
                     profit = (filled_price - entry_price) * QUANTITY_BTC
                     total_profit_usdc += profit
                     print(f"[{now_str()}] [USER EVENT] SL LIMIT FILLED @ {filled_price}")
-                    send_telegram(f"SL Limit Filled @ {filled_price:.2f} → P/L: {profit:+.2f} USDC")
+                    send_telegram(f"[{STRATEGY}] ====> SL Limit Filled @ {filled_price:.2f} → P/L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, successful trades: {successful_trades},stop-loss-trades:{stop_lossed_trades} ")
                     log_trade("SL_LIMIT_FILLED", order_id, entry=entry_price, exit_p=filled_price, profit=profit)
                     last_trade = {"type": "SL_LIMIT", "profit": profit}
                     cleanup_sl_state()
@@ -381,7 +384,7 @@ def should_buy(df: pd.DataFrame) -> bool:
         '''if not is_htf_trend_bullish("5m"):
             send_telegram("EMA Golden Cross detected, but HTF trend not bullish")
             return False'''
-        send_telegram("Buy signal confirmed: EMA Golden Cross + HTF bullish")
+        #send_telegram("Buy signal confirmed: EMA Golden Cross + HTF bullish")
         return True
     elif STRATEGY == "RSI":
         if "rsi" not in df.columns:
@@ -410,7 +413,7 @@ def should_buy(df: pd.DataFrame) -> bool:
         '''if not is_htf_trend_bullish("5m"):
             send_telegram("MACD buy signal detected, but HTF trend not bullish")
             return False'''
-        send_telegram("Buy signal confirmed: MACD crossover + HTF bullish")
+        #send_telegram("Buy signal confirmed: MACD crossover + HTF bullish")
         return True
 
     return False
