@@ -47,6 +47,7 @@ TIMEFRAME =  sys.argv[3] if len(sys.argv) > 3 else"3m"
 # Indicator parameters
 EMA_FAST = 9
 EMA_SLOW = 21
+EMA_50 = 50
 EMA_100 = 100
 EMA_200 = 200
 
