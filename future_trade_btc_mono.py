@@ -1,13 +1,5 @@
-#!/usr/bin/env python3
-"""
-Futures EMA Bot – BTCUSDC Perpetual
-→ Uses python-binance ThreadedWebsocketManager with futures_user_socket
-→ Works perfectly with current python-binance (1.0.19 / 2.x)
-→ No leverage change, no contract conversion needed
-"""
-# Usage filename.py EMA 0.01 1m
 
-import time#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Futures EMA Bot – BTCUSDC Perpetual
 → Uses python-binance ThreadedWebsocketManager with futures_user_socket
@@ -55,7 +47,8 @@ TIMEFRAME =  sys.argv[3] if len(sys.argv) > 3 else"3m"
 # Indicator parameters
 EMA_FAST = 9
 EMA_SLOW = 21
-EMA_50 = 50
+EMA_100 = 100
+EMA_200 = 200
 
 RSI_PERIOD = 7
 RSI_OVERSOLD = 19
@@ -110,6 +103,7 @@ total_profit_usdc = 0.0
 successful_trades = 0
 stop_lossed_trades = 0
 klines_history = []
+volume_history = []
 lock = threading.Lock()
 app = Flask(__name__)
 
@@ -144,9 +138,10 @@ def log_trade(event, order_id=None, entry=0, exit_p=0, profit=0, notes=""):
 # INIT KLINES
 # =============================
 def init_klines():
-    global klines_history
+    global klines_history,volume_history
     klines = client.futures_klines(symbol=SYMBOL, interval=TIMEFRAME, limit=KL_HISTORY_LIMIT)
     klines_history = [float(k[4]) for k in klines]
+    volume_history = [float(k[5]) for k in klines]      # volume is index 5
     print(f"[{now_str()}] Loaded {len(klines_history)} klines")
 
 # =============================
@@ -370,17 +365,34 @@ def is_htf_trend_bullish(timeframe: str = "5m") -> bool:
 def should_buy(df: pd.DataFrame) -> bool:
     """Return True if buy signal based on current STRATEGY"""
     
-    if len(df) < 100:  # safety
+    if len(df) < 200:  # safety
         return False
 
     close = df["close"]
 
+
     # === 1. RSI not overbought ===
     if "rsi" in df.columns and df["rsi"].iloc[-1] > 70:
         return False
-    #=== 2. Price above EMA50 ===
-    #if STRATEGY != "RSI" and "ema50" in df.columns and close.iloc[-1] < df["ema50"].iloc[-1]:
-    #    return False
+    
+    # Condition A: Price above EMA50
+    if close.iloc[-1] <= df["ema50"].iloc[-1]:
+        return False
+    # Condition B: EMA50 must be above EMA200 (strong bullish structure)
+    if df["ema50"].iloc[-1] <= df["ema200"].iloc[-1]:
+        return False
+
+    # Slightly smarter – ignores tiny candles during Asian session
+    avg_vol_20 = df["volume"].iloc[-20:].mean()
+    volume_ratio = df["volume"].iloc[-1] / avg_vol_20 if avg_vol_20 > 0 else 0
+
+    # London/NY session → require stronger spike
+    if 12 <= datetime.now(pytz.utc).hour <= 23:  # 12–23 UTC = London + NY
+        if volume_ratio < 1.7:
+            return False
+    else:  # Asian session – accept milder spikes
+        if volume_ratio < 1.4:
+            return False
 
     if STRATEGY == "EMA":
         if "fast_ema" not in df.columns or "slow_ema" not in df.columns:
@@ -460,13 +472,16 @@ def kline_handler(msg):
         return  # Not a closed candle → ignore
 
     close_price = float(k["c"])
+    volume_current = float(k["v"])  # volume of this candle
     close_time = k["T"]
     if datetime.now().minute % 5 == 0:
         print(f"[{now_str()}] KLINE CLOSED @ {close_price} | Time: {datetime.fromtimestamp(close_time/1000,tz=pytz.timezone('America/Los_Angeles')).strftime('%Y-%m-%d %H:%M:%S')}")
 
     klines_history.append(close_price)
+    volume_history.append(volume_current)
     if len(klines_history) > KL_HISTORY_LIMIT:
         klines_history.pop(0)
+        volume_history.pop(0)
 
     # Need enough data
     required_len = max(EMA_SLOW, RSI_PERIOD, MACD_SLOW) + 50
@@ -480,7 +495,8 @@ def kline_handler(msg):
     df["fast_ema"] = EMAIndicator(df["close"], window=EMA_FAST).ema_indicator()
     df["slow_ema"] = EMAIndicator(df["close"], window=EMA_SLOW).ema_indicator()
     df["ema50"] = EMAIndicator(df["close"], window=EMA_50).ema_indicator()
-
+    df["ema100"] = EMAIndicator(df["close"], window=EMA_100).ema_indicator()
+    df["ema200"] = EMAIndicator(df["close"], window=EMA_200).ema_indicator()
     # Conditional indicators (only compute if needed)
     if STRATEGY in ["RSI", "MACD"] or True:  # or always compute for flexibility
         df["rsi"] = RSIIndicator(df["close"], window=RSI_PERIOD).rsi()
