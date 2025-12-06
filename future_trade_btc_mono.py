@@ -389,10 +389,10 @@ def should_buy(df: pd.DataFrame) -> bool:
 
     # London/NY session → require stronger spike
     if 12 <= datetime.now(pytz.utc).hour <= 23:  # 12–23 UTC = London + NY
-        if volume_ratio < 1.7:
+        if volume_ratio < 1.4:
             return False
     else:  # Asian session – accept milder spikes
-        if volume_ratio < 1.4:
+        if volume_ratio < 1.2:
             return False
 
     if STRATEGY == "EMA":
@@ -490,8 +490,10 @@ def kline_handler(msg):
         return
 
     # === Build DataFrame with all indicators ===
-    df = pd.DataFrame({"close": klines_history})
-
+    df = pd.DataFrame({
+            "close" : klines_history,
+            "volume": volume_history
+        })
     # Always compute EMA (used in many places)
     df["fast_ema"] = EMAIndicator(df["close"], window=EMA_FAST).ema_indicator()
     df["slow_ema"] = EMAIndicator(df["close"], window=EMA_SLOW).ema_indicator()
