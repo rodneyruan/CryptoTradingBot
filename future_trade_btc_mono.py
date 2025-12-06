@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+"""
+Futures EMA Bot – BTCUSDC Perpetual
+→ Uses python-binance ThreadedWebsocketManager with futures_user_socket
+→ Works perfectly with current python-binance (1.0.19 / 2.x)
+→ No leverage change, no contract conversion needed
+"""
+# Usage filename.py EMA 0.01 1m
+
+import time#!/usr/bin/env python3
+"""
+Futures EMA Bot – BTCUSDC Perpetual
+→ Uses python-binance ThreadedWebsocketManager with futures_user_socket
+→ Works perfectly with current python-binance (1.0.19 / 2.x)
+→ No leverage change, no contract conversion needed
+"""
+# Usage filename.py EMA 0.01 1m
+
+import time
 import threading
 import requests
 import pandas as pd
@@ -360,8 +379,8 @@ def should_buy(df: pd.DataFrame) -> bool:
     if "rsi" in df.columns and df["rsi"].iloc[-1] > 70:
         return False
     #=== 2. Price above EMA50 ===
-    if STRATEGY != "RSI" and "ema50" in df.columns and close.iloc[-1] < df["ema50"].iloc[-1]:
-        return False
+    #if STRATEGY != "RSI" and "ema50" in df.columns and close.iloc[-1] < df["ema50"].iloc[-1]:
+    #    return False
 
     if STRATEGY == "EMA":
         if "fast_ema" not in df.columns or "slow_ema" not in df.columns:
@@ -369,7 +388,9 @@ def should_buy(df: pd.DataFrame) -> bool:
         fast = df["fast_ema"]
         slow = df["slow_ema"]
         #1  Golden cross on the just-closed candle
-        if not (fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1]):
+        if not (fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1]  > slow.iloc[-1]):
+            return False
+        if slow.iloc[-1] <= df["ema50"].iloc[-1]:
             return False
         # 3. confirm HTF trend is bullish
         # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
@@ -398,9 +419,21 @@ def should_buy(df: pd.DataFrame) -> bool:
             return False
         macd = df["macd_line"]
         signal = df["signal_line"]
+        hist = macd - signal
         # MACD crosses above signal on closed candle
         if not (macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]):
             return False
+        
+        macd_was_below_for_several_bars = True
+        for i in range(2, 11):           # i = 2 → candle -2, i = 7 → candle -7
+            if macd.iloc[-i] > signal.iloc[-i]:
+                macd_was_below_for_several_bars = False
+                break
+
+        if not macd_was_below_for_several_bars:
+            send_telegram("Good MACD crossover, but MACD was not below signal for several bars")
+            return False
+        
         # 3. confirm HTF trend is bullish
         '''if not is_htf_trend_bullish("5m"):
             send_telegram("MACD buy signal detected, but HTF trend not bullish")
