@@ -439,7 +439,7 @@ def should_buy(df: pd.DataFrame) -> bool:
             return False
         
         macd_was_below_for_several_bars = True
-        for i in range(2, 11):           # i = 2 → candle -2, i = 7 → candle -7
+        for i in range(2, 9):           # i = 2 → candle -2, i = 7 → candle -7
             if macd.iloc[-i] > signal.iloc[-i]:
                 macd_was_below_for_several_bars = False
                 break
@@ -447,10 +447,12 @@ def should_buy(df: pd.DataFrame) -> bool:
         if not macd_was_below_for_several_bars:
             send_telegram("Good MACD crossover, but MACD was not below signal for several bars")
             return False
-        
+        # Optional: even stricter
+        if macd.iloc[-1] >= 0:
+            return False
         # 3. confirm HTF trend is bullish
         if not is_htf_trend_bullish("15m"):
-            send_telegram("MACD buy signal detected, but HTF trend not bullish")
+            send_telegram("[MACD] buy signal detected, but HTF trend not bullish")
             return False
         #send_telegram("Buy signal confirmed: MACD crossover + HTF bullish")
         return True
