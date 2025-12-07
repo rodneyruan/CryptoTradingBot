@@ -326,7 +326,7 @@ def cleanup_sl_state():
     entry_price = 0.0
     position_open = False
 
-def is_htf_trend_bullish(timeframe: str = "5m") -> bool:
+def is_htf_trend_bullish(timeframe: str = "1h") -> bool:
     """
     Check if EMA50 > EMA200 on the specified higher timeframe.
     
@@ -338,8 +338,8 @@ def is_htf_trend_bullish(timeframe: str = "5m") -> bool:
         False → Bearish or neutral
     """
     try:
-        # Pull enough data for EMA200 + some buffer
-        limit_needed = 300
+        # Pull enough data for EMA50 + some buffer
+        limit_needed = 100
         klines = client.futures_klines(
             symbol=SYMBOL,
             interval=timeframe,
@@ -348,13 +348,14 @@ def is_htf_trend_bullish(timeframe: str = "5m") -> bool:
 
         # Convert to DataFrame (only close price needed)
         closes = [float(k[4]) for k in klines]  # index 4 = close
+        current_price = closes[-1]
         df = pd.DataFrame({"close": closes})
 
         # Calculate EMA50 and EMA200
         ema50  = EMAIndicator(df["close"], window=50).ema_indicator().iloc[-1]
-        ema200 = EMAIndicator(df["close"], window=200).ema_indicator().iloc[-1]
+        #ema200 = EMAIndicator(df["close"], window=200).ema_indicator().iloc[-1]
 
-        return ema50 > ema200
+        return current_price > ema50
 
     except Exception as e:
         print(f"[{now_str()}] HTF trend check failed ({timeframe}): {e}")
@@ -377,14 +378,14 @@ def should_buy(df: pd.DataFrame) -> bool:
         return False
     
     # Condition A: Price above EMA50
-    if close.iloc[-1] <= df["ema50"].iloc[-1]:
+    '''if close.iloc[-1] <= df["ema50"].iloc[-1]:
         return False
     # Condition B: EMA50 must be above EMA200 (strong bullish structure)
     if df["ema50"].iloc[-1] <= df["ema200"].iloc[-1]:
-        return False
+        return False'''
 
     # Slightly smarter – ignores tiny candles during Asian session
-    avg_vol_20 = df["volume"].iloc[-20:].mean()
+    '''avg_vol_20 = df["volume"].iloc[-20:].mean()
     volume_ratio = df["volume"].iloc[-1] / avg_vol_20 if avg_vol_20 > 0 else 0
 
     # London/NY session → require stronger spike
@@ -393,7 +394,7 @@ def should_buy(df: pd.DataFrame) -> bool:
             return False
     else:  # Asian session – accept milder spikes
         if volume_ratio < 1.2:
-            return False
+            return False'''
 
     if STRATEGY == "EMA":
         if "fast_ema" not in df.columns or "slow_ema" not in df.columns:
@@ -403,13 +404,13 @@ def should_buy(df: pd.DataFrame) -> bool:
         #1  Golden cross on the just-closed candle
         if not (fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1]  > slow.iloc[-1]):
             return False
-        if slow.iloc[-1] <= df["ema50"].iloc[-1]:
-            return False
+        '''if slow.iloc[-1] <= df["ema50"].iloc[-1]:
+            return False'''
         # 3. confirm HTF trend is bullish
         # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
-        '''if not is_htf_trend_bullish("5m"):
+        if not is_htf_trend_bullish("15m"):
             send_telegram("EMA Golden Cross detected, but HTF trend not bullish")
-            return False'''
+            return False
         #send_telegram("Buy signal confirmed: EMA Golden Cross + HTF bullish")
         return True
     elif STRATEGY == "RSI":
@@ -421,9 +422,9 @@ def should_buy(df: pd.DataFrame) -> bool:
             return False
         # 3. confirm HTF trend is bullish
         # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
-        '''if not is_htf_trend_bullish("5m"):
+        if not is_htf_trend_bullish("15m"):
             send_telegram("RSI buy signal detected, but HTF trend not bullish")
-            return False'''
+            return False
         send_telegram("Buy signal confirmed: RSI exit oversold + HTF bullish")
         return True
 
@@ -448,9 +449,9 @@ def should_buy(df: pd.DataFrame) -> bool:
             return False
         
         # 3. confirm HTF trend is bullish
-        '''if not is_htf_trend_bullish("5m"):
+        if not is_htf_trend_bullish("15m"):
             send_telegram("MACD buy signal detected, but HTF trend not bullish")
-            return False'''
+            return False
         #send_telegram("Buy signal confirmed: MACD crossover + HTF bullish")
         return True
 
