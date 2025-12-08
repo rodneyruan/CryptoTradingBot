@@ -600,8 +600,22 @@ def kline_handler(msg):
                 send_exception_to_telegram(e)
 
     # === STOP-LOSS LOGIC (unchanged, just cleaned) ===
-    if position_open and entry_price and close_price <= entry_price * (1 - SL_PCT):
-        if not stoploss_limit_id:
+    if position_open and entry_price:
+        # Determine if SL is hit based on direction
+        sl_hit = False
+        if TRADE_DIRECTION == "LONG":
+            if close_price <= entry_price * (1 - SL_PCT):
+                sl_hit = True
+                sl_side = "SELL"
+                sl_price = round(close_price + 20, PRICE_PRECISION)  # slightly above market
+        else:  # SHORT
+            if close_price >= entry_price * (1 + SL_PCT):
+                sl_hit = True
+                sl_side = "BUY"
+                sl_price = round(close_price - 20, PRICE_PRECISION)  # slightly below market
+
+        if sl_hit and not stoploss_limit_id:
+            # Cancel TP if exists
             if tp_id:
                 try:
                     client.futures_cancel_order(symbol=SYMBOL, orderId=tp_id)
@@ -610,23 +624,29 @@ def kline_handler(msg):
                     send_exception_to_telegram(e)
                 tp_id = None
 
-            limit_sell_price = round(close_price + 20, PRICE_PRECISION)
             stop_lossed_trades += 1
             try:
                 sl_order = client.futures_create_order(
                     symbol=SYMBOL,
-                    side="SELL",
+                    side=sl_side,
                     type="LIMIT",
                     quantity=QUANTITY_BTC,
-                    price=str(limit_sell_price),
+                    price=str(sl_price),
                     timeInForce="GTC"
                 )
                 stoploss_limit_id = sl_order["orderId"]
                 stoploss_monitor_attempts = 0
-                send_telegram(f"{STRATEGY} SL Triggered → Limit Sell @ {limit_sell_price} Stop-loss trades: {stop_lossed_trades}")
+                send_telegram(
+                    f"[{STRATEGY}] SL TRIGGERED ({TRADE_DIRECTION})\n"
+                    f"→ Limit {sl_side} @ {sl_price}\n"
+                    f"Entry: {entry_price:.2f} | Current: {close_price:.2f}\n"
+                    f"SL trades: {stop_lossed_trades}"
+                )
             except Exception as e:
-                print(f"{STRATEGY} SL limit order failed: {e}")
+                print(f"SL limit order failed ({TRADE_DIRECTION}): {e}")
                 send_exception_to_telegram(e)
+
+
 
     # === SL MONITOR & MARKET FALLBACK ===
     if stoploss_limit_id:
@@ -697,7 +717,7 @@ def start_bot():
     init_klines()
 
     # Flask (if any)
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=5001, use_reloader=False), daemon=True).start()
+    #threading.Thread(target=lambda: app.run(host="0.0.0.0", port=5001, use_reloader=False), daemon=True).start()
 
     twm.start()
 
