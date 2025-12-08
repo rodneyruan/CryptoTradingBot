@@ -52,22 +52,22 @@ EMA_100 = 100
 EMA_200 = 200
 
 RSI_PERIOD = 7
-RSI_OVERSOLD = 19
+RSI_OVERSOLD = 36
 RSI_OVERBOUGHT = 70
 
 MACD_FAST = 8
 MACD_SLOW = 21
 MACD_SIGNAL = 5
 
-TP_PCT   = 0.0022
-SL_PCT   = 0.006
-if STRATEGY == "MACD":
-    TP_PCT   = 0.0022
-    SL_PCT   = 0.0055
+TP_PCT   = 0.003    # 0.45%
+SL_PCT   = 0.009
+'''if STRATEGY == "MACD":
+    TP_PCT   = 0.0045
+    SL_PCT   = 0.01
 elif STRATEGY == "RSI":
-    TP_PCT   = 0.0022
-
-SL_PCT   = 0.006       # 0.6%
+    TP_PCT   = 0.0045
+    SL_PCT   = 0.01
+'''
 CANCEL_AFTER = 10 * 60
 KL_HISTORY_LIMIT = 500
 STOPLOSS_LIMIT_RETRY_MAX = 5
@@ -352,103 +352,6 @@ def is_htf_bearish(timeframe: str = "1h") -> bool:
         return closes[-1] < ema50
     except:
         return True
-# =============================
-# BUY CONDITION (SEPARATE & EASY TO EXTEND)
-# =============================
-def should_buy(df: pd.DataFrame) -> bool:
-    """Return True if buy signal based on current STRATEGY"""
-    
-    if len(df) < 200:  # safety
-        return False
-
-    close = df["close"]
-
-
-    # === 1. RSI not overbought ===
-    if "rsi14" in df.columns and df["rsi14"].iloc[-1] > 70:
-        return False
-    
-    # Condition A: Price above EMA50
-    '''if close.iloc[-1] <= df["ema50"].iloc[-1]:
-        return False
-    # Condition B: EMA50 must be above EMA200 (strong bullish structure)
-    if df["ema50"].iloc[-1] <= df["ema200"].iloc[-1]:
-        return False'''
-
-    # Slightly smarter – ignores tiny candles during Asian session
-    '''avg_vol_20 = df["volume"].iloc[-20:].mean()
-    volume_ratio = df["volume"].iloc[-1] / avg_vol_20 if avg_vol_20 > 0 else 0
-
-    # London/NY session → require stronger spike
-    if 12 <= datetime.now(pytz.utc).hour <= 23:  # 12–23 UTC = London + NY
-        if volume_ratio < 1.4:
-            return False
-    else:  # Asian session – accept milder spikes
-        if volume_ratio < 1.2:
-            return False'''
-
-    if STRATEGY == "EMA":
-        if "fast_ema" not in df.columns or "slow_ema" not in df.columns:
-            return False
-        fast = df["fast_ema"]
-        slow = df["slow_ema"]
-        #1  Golden cross on the just-closed candle
-        if not (fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1]  > slow.iloc[-1]):
-            return False
-        '''if slow.iloc[-1] <= df["ema50"].iloc[-1]:
-            return False'''
-        # 3. confirm HTF trend is bullish
-        # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
-        if not is_htf_trend_bullish("15m"):
-            send_telegram("EMA Golden Cross detected, but HTF trend not bullish")
-            return False
-        #send_telegram("Buy signal confirmed: EMA Golden Cross + HTF bullish")
-        return True
-    elif STRATEGY == "RSI":
-        if "rsi" not in df.columns:
-            return False
-        rsi = df["rsi"]
-        # RSI exits oversold on closed candle
-        if not (rsi.iloc[-2] <= RSI_OVERSOLD and rsi.iloc[-1] > RSI_OVERSOLD):
-            return False
-        # 3. confirm HTF trend is bullish
-        # is_htf_trend_bullish costs some API calls, so only do it when golden cross detected
-        if not is_htf_trend_bullish("15m"):
-            send_telegram("RSI buy signal detected, but HTF trend not bullish")
-            return False
-        send_telegram("Buy signal confirmed: RSI exit oversold + HTF bullish")
-        return True
-
-    elif STRATEGY == "MACD":
-        if "macd_line" not in df.columns or "signal_line" not in df.columns:
-            return False
-        macd = df["macd_line"]
-        signal = df["signal_line"]
-        hist = macd - signal
-        # MACD crosses above signal on closed candle
-        if not (macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]):
-            return False
-        
-        macd_was_below_for_several_bars = True
-        for i in range(2, 9):           # i = 2 → candle -2, i = 7 → candle -7
-            if macd.iloc[-i] > signal.iloc[-i]:
-                macd_was_below_for_several_bars = False
-                break
-
-        if not macd_was_below_for_several_bars:
-            send_telegram("Good MACD crossover, but MACD was not below signal for several bars")
-            return False
-        # Optional: even stricter
-        if macd.iloc[-1] >= 0:
-            return False
-        # 3. confirm HTF trend is bullish
-        if not is_htf_trend_bullish("15m"):
-            send_telegram("[MACD] buy signal detected, but HTF trend not bullish")
-            return False
-        #send_telegram("Buy signal confirmed: MACD crossover + HTF bullish")
-        return True
-
-    return False
 
 # =============================
 # UNIVERSAL ENTRY CONDITION (LONG + SHORT)
@@ -495,14 +398,14 @@ def should_enter(df: pd.DataFrame) -> str:
         if TRADE_DIRECTION == "LONG":
             if not (macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]):
                 return None
-            if macd.iloc[-1] >= 0:  # optional extra filter
-                return None
+            #if macd.iloc[-1] >= 0:  # optional extra filter
+            #    return None
             return "LONG"
         else:
             if not (macd.iloc[-2] >= signal.iloc[-2] and macd.iloc[-1] < signal.iloc[-1]):
                 return None
-            if macd.iloc[-1] <= 0:
-                return None
+            #if macd.iloc[-1] <= 0:
+            #    return None
             return "SHORT"
 
     elif STRATEGY == "EMA":
