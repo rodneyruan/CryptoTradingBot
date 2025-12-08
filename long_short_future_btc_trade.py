@@ -183,7 +183,7 @@ def place_tp(entry: float):
         globals()['tp_id'] = order["orderId"]
         send_telegram(f"[{STRATEGY}] [{TRADE_DIRECTION}] TP placed @ {tp_price}")
         log_trade("TP_PLACED", order["orderId"], entry=entry, exit_p=tp_price, notes=f"{TRADE_DIRECTION} TP")
-    except Exception as [{STRATEGY}] [{TRADE_DIRECTION}] e:
+    except Exception as e:
         print("TP error:", e)
         send_exception_to_telegram(e)
 
