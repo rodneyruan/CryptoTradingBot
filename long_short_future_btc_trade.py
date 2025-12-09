@@ -52,15 +52,15 @@ EMA_100 = 100
 EMA_200 = 200
 
 RSI_PERIOD = 7
-RSI_OVERSOLD = 36
-RSI_OVERBOUGHT = 70
+RSI_OVERSOLD = 22
+RSI_OVERBOUGHT = 78
 
 MACD_FAST = 8
 MACD_SLOW = 21
 MACD_SIGNAL = 5
 
-TP_PCT   = 0.003    # 0.45%
-SL_PCT   = 0.009
+TP_PCT   = 0.002    # 0.45%
+SL_PCT   = 0.005    # 1%
 '''if STRATEGY == "MACD":
     TP_PCT   = 0.0045
     SL_PCT   = 0.01
@@ -369,15 +369,19 @@ def should_enter(df: pd.DataFrame) -> str:
             return None
         '''if close.iloc[-1] <= df["ema50"].iloc[-1] or df["ema50"].iloc[-1] <= df["ema200"].iloc[-1]:
             return None'''
-        if not is_htf_bullish("15m"):
+        if close.iloc[-1] <= df["ema50"].iloc[-1]:
             return None
+        #if not is_htf_bullish("15m"):
+        #    return None
     else:  # SHORT
         if "rsi14" in df.columns and df["rsi14"].iloc[-1] < 30:
             return None
         '''if close.iloc[-1] >= df["ema50"].iloc[-1] or df["ema50"].iloc[-1] >= df["ema200"].iloc[-1]:
             return None'''
-        if not is_htf_bearish("15m"):
+        if close.iloc[-1] >= df["ema50"].iloc[-1]:
             return None
+        #if not is_htf_bearish("15m"):
+        #    return None
 
     # === STRATEGY LOGIC ===
     if STRATEGY == "RSI":
@@ -400,23 +404,43 @@ def should_enter(df: pd.DataFrame) -> str:
                 return None
             #if macd.iloc[-1] >= 0:  # optional extra filter
             #    return None
+            macd_was_below_for_several_bars = 0
+            for i in range(2, 16):           # i = 2 → candle -2, i = 7 → candle -7
+                if macd.iloc[-i] < signal.iloc[-i]:
+                    macd_was_below_for_several_bars += 1
+            if  macd_was_below_for_several_bars <= 7:
+                send_telegram("Good MACD crossover, but MACD was not below signal for 7 bars out of 15")
+                return None
             return "LONG"
         else:
             if not (macd.iloc[-2] >= signal.iloc[-2] and macd.iloc[-1] < signal.iloc[-1]):
                 return None
             #if macd.iloc[-1] <= 0:
             #    return None
+            macd_was_above_for_several_bars = 0
+            for i in range(2, 16):           # i = 2 → candle -2, i = 7 → candle -7
+                if macd.iloc[-i] > signal.iloc[-i]:
+                    macd_was_above_for_several_bars += 1
+            if  macd_was_above_for_several_bars <= 7:
+                send_telegram("Good MACD crossover, but MACD was not above signal for 7 bars out of 15")
+                return None
             return "SHORT"
 
     elif STRATEGY == "EMA":
         fast = df["fast_ema"]
         slow = df["slow_ema"]
         if TRADE_DIRECTION == "LONG":
-            if not (fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1]):
+            if not (fast.iloc[-4] <= slow.iloc[-4] and fast.iloc[-3] <= slow.iloc[-3] and fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1]):
                 return None
+            if not ( (fast.iloc[-4]+20) <= slow.iloc[-4] or (fast.iloc[-3]+20) <= slow.iloc[-3] or (fast.iloc[-2]+20) <= slow.iloc[-2] or (fast.iloc[-1]-20)  > slow.iloc[-1]):
+                return None
+            '''if slow.iloc[-1] <= df["ema50"].iloc[-1]:
+                return False'''
             return "LONG"
         else:
-            if not (fast.iloc[-2] >= slow.iloc[-2] and fast.iloc[-1] < slow.iloc[-1]):
+            if not (fast.iloc[-4] >= slow.iloc[-4] and fast.iloc[-3] >= slow.iloc[-3] and fast.iloc[-2] >= slow.iloc[-2] and fast.iloc[-1] < slow.iloc[-1]):
+                return None
+            if not ( (fast.iloc[-4]-20) >= slow.iloc[-4] or (fast.iloc[-3]-20) >= slow.iloc[-3] or (fast.iloc[-2]-20) >= slow.iloc[-2] or (fast.iloc[-1]+20)  < slow.iloc[-1]):
                 return None
             return "SHORT"
 
