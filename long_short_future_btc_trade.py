@@ -100,6 +100,9 @@ successful_trades = 0
 stop_lossed_trades = 0
 klines_history = []
 volume_history = []
+high_history = []
+low_history = []
+
 lock = threading.Lock()
 app = Flask(__name__)
 
@@ -134,10 +137,12 @@ def log_trade(event, order_id=None, entry=0, exit_p=0, profit=0, notes=""):
 # INIT KLINES
 # =============================
 def init_klines():
-    global klines_history,volume_history
+    global klines_history,volume_history,high_history,low_history
     klines = client.futures_klines(symbol=SYMBOL, interval=TIMEFRAME, limit=KL_HISTORY_LIMIT)
     klines_history = [float(k[4]) for k in klines]
-    volume_history = [float(k[5]) for k in klines]      # volume is index 5
+    volume_history = [float(k[5]) for k in klines]        # ← Volume per candle
+    high_history   = [float(k[2]) for k in klines]        # ← Highest price per candle
+    low_history    = [float(k[3]) for k in klines]        # ← Lowest price per candle
     print(f"[{now_str()}] Loaded {len(klines_history)} klines")
 
 # =============================
@@ -400,11 +405,17 @@ def should_enter(df: pd.DataFrame) -> str:
         signal = df["signal_line"]
         hist = df["macd_hist"]
         if TRADE_DIRECTION == "LONG":
+            
             if not (macd.iloc[-2] <= signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]):
                 return None
             #if macd.iloc[-1] >= 0:  # optional extra filter
             #    return None
             macd_was_below_for_several_bars = 0
+            target_price = close.iloc[-1] * (1+ TP_PCT) + 10
+            previous_high = max(high_history[-15:-1])
+            if target_price < previous_high:
+                send_telegram("Good MACD crossover, but TP price is below recent high")
+                return None
             for i in range(2, 16):           # i = 2 → candle -2, i = 7 → candle -7
                 if macd.iloc[-i] < signal.iloc[-i]:
                     macd_was_below_for_several_bars += 1
@@ -450,7 +461,7 @@ def should_enter(df: pd.DataFrame) -> str:
 # KLINE HANDLER – CLEAN & MODULAR
 # =============================
 def kline_handler(msg):
-    global klines_history, position_open,volume_history, entry_price
+    global klines_history, position_open,volume_history, entry_price, high_history, low_history
     global stoploss_limit_id, stoploss_monitor_attempts, tp_id,stop_lossed_trades,limit_buy_id
 
     # Handle multiplex socket wrapper
@@ -463,6 +474,9 @@ def kline_handler(msg):
         return  # Not a closed candle → ignore
 
     close_price = float(k["c"])
+    high_current = float(k["h"])
+    low_current = float(k["l"])
+
     volume_current = float(k["v"])  # volume of this candle
     close_time = k["T"]
     if datetime.now().minute % 5 == 0:
@@ -470,9 +484,13 @@ def kline_handler(msg):
 
     klines_history.append(close_price)
     volume_history.append(volume_current)
+    high_history.append(high_current)
+    low_history.append(low_current)
     if len(klines_history) > KL_HISTORY_LIMIT:
         klines_history.pop(0)
         volume_history.pop(0)
+        high_history.pop(0)
+        low_history.pop(0)
 
     # Need enough data
     required_len = max(EMA_SLOW, RSI_PERIOD, MACD_SLOW) + 50
@@ -482,7 +500,9 @@ def kline_handler(msg):
     # === Build DataFrame with all indicators ===
     df = pd.DataFrame({
             "close" : klines_history,
-            "volume": volume_history
+            "volume": volume_history,
+            "high": high_history,
+            "low": low_history
         })
     # Always compute EMA (used in many places)
     df["fast_ema"] = EMAIndicator(df["close"], window=EMA_FAST).ema_indicator()
