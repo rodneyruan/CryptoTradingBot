@@ -454,7 +454,7 @@ def should_enter(df: pd.DataFrame) -> str:
             target_price = close.iloc[-1] * (1+ TP_PCT) + 10
             previous_high = max(high_history[-15:-1])
             if target_price > previous_high:
-                send_telegram("Good MACD crossover, but TP price is above recent high")
+                send_telegram("Good EMA crossover, but TP price is above recent high")
                 return None
             '''if slow.iloc[-1] <= df["ema50"].iloc[-1]:
                 return False'''
@@ -467,7 +467,7 @@ def should_enter(df: pd.DataFrame) -> str:
             target_price = close.iloc[-1] * (1 - TP_PCT) - 10
             previous_low = min(low_history[-15:-1])
             if target_price < previous_low:
-                send_telegram("Good MACD crossover, but TP price is below recent low")
+                send_telegram("Good EMA crossover, but TP price is below recent low")
                 return None
             return "SHORT"
 
