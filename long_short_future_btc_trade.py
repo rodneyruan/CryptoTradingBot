@@ -362,6 +362,7 @@ def is_htf_bearish(timeframe: str = "1h") -> bool:
 # UNIVERSAL ENTRY CONDITION (LONG + SHORT)
 # =============================
 def should_enter(df: pd.DataFrame) -> str:
+    global STRATEGY, TRADE_DIRECTION, high_history, low_history
     """Return 'LONG', 'SHORT', or None"""
     if len(df) < 200:
         return None
@@ -413,8 +414,8 @@ def should_enter(df: pd.DataFrame) -> str:
             macd_was_below_for_several_bars = 0
             target_price = close.iloc[-1] * (1+ TP_PCT) + 10
             previous_high = max(high_history[-15:-1])
-            if target_price < previous_high:
-                send_telegram("Good MACD crossover, but TP price is below recent high")
+            if target_price > previous_high:
+                send_telegram("Good MACD crossover, but TP price is above recent high")
                 return None
             for i in range(2, 16):           # i = 2 → candle -2, i = 7 → candle -7
                 if macd.iloc[-i] < signal.iloc[-i]:
@@ -429,6 +430,11 @@ def should_enter(df: pd.DataFrame) -> str:
             #if macd.iloc[-1] <= 0:
             #    return None
             macd_was_above_for_several_bars = 0
+            target_price = close.iloc[-1] * (1 - TP_PCT) - 10
+            previous_low = min(low_history[-15:-1])
+            if target_price < previous_low:
+                send_telegram("Good MACD crossover, but TP price is below recent low")
+                return None
             for i in range(2, 16):           # i = 2 → candle -2, i = 7 → candle -7
                 if macd.iloc[-i] > signal.iloc[-i]:
                     macd_was_above_for_several_bars += 1
@@ -445,6 +451,11 @@ def should_enter(df: pd.DataFrame) -> str:
                 return None
             if not ( (fast.iloc[-4]+20) <= slow.iloc[-4] or (fast.iloc[-3]+20) <= slow.iloc[-3] or (fast.iloc[-2]+20) <= slow.iloc[-2] or (fast.iloc[-1]-20)  > slow.iloc[-1]):
                 return None
+            target_price = close.iloc[-1] * (1+ TP_PCT) + 10
+            previous_high = max(high_history[-15:-1])
+            if target_price > previous_high:
+                send_telegram("Good MACD crossover, but TP price is above recent high")
+                return None
             '''if slow.iloc[-1] <= df["ema50"].iloc[-1]:
                 return False'''
             return "LONG"
@@ -452,6 +463,11 @@ def should_enter(df: pd.DataFrame) -> str:
             if not (fast.iloc[-4] >= slow.iloc[-4] and fast.iloc[-3] >= slow.iloc[-3] and fast.iloc[-2] >= slow.iloc[-2] and fast.iloc[-1] < slow.iloc[-1]):
                 return None
             if not ( (fast.iloc[-4]-20) >= slow.iloc[-4] or (fast.iloc[-3]-20) >= slow.iloc[-3] or (fast.iloc[-2]-20) >= slow.iloc[-2] or (fast.iloc[-1]+20)  < slow.iloc[-1]):
+                return None
+            target_price = close.iloc[-1] * (1 - TP_PCT) - 10
+            previous_low = min(low_history[-15:-1])
+            if target_price < previous_low:
+                send_telegram("Good MACD crossover, but TP price is below recent low")
                 return None
             return "SHORT"
 
