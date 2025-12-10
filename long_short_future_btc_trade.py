@@ -412,7 +412,7 @@ def should_enter(df: pd.DataFrame) -> str:
             #if macd.iloc[-1] >= 0:  # optional extra filter
             #    return None
             macd_was_below_for_several_bars = 0
-            target_price = close.iloc[-1] * (1+ TP_PCT) + 10
+            target_price = close.iloc[-1] * (1+ TP_PCT) - 50
             previous_high = max(high_history[-15:-1])
             if target_price > previous_high:
                 send_telegram("Good MACD crossover, but TP price is above recent high")
@@ -430,7 +430,7 @@ def should_enter(df: pd.DataFrame) -> str:
             #if macd.iloc[-1] <= 0:
             #    return None
             macd_was_above_for_several_bars = 0
-            target_price = close.iloc[-1] * (1 - TP_PCT) - 10
+            target_price = close.iloc[-1] * (1 - TP_PCT) + 50
             previous_low = min(low_history[-15:-1])
             if target_price < previous_low:
                 send_telegram("Good MACD crossover, but TP price is below recent low")
@@ -451,7 +451,7 @@ def should_enter(df: pd.DataFrame) -> str:
                 return None
             if not ( (fast.iloc[-4]+20) <= slow.iloc[-4] or (fast.iloc[-3]+20) <= slow.iloc[-3] or (fast.iloc[-2]+20) <= slow.iloc[-2] or (fast.iloc[-1]-20)  > slow.iloc[-1]):
                 return None
-            target_price = close.iloc[-1] * (1+ TP_PCT) + 10
+            target_price = close.iloc[-1] * (1+ TP_PCT) -50
             previous_high = max(high_history[-15:-1])
             if target_price > previous_high:
                 send_telegram("Good EMA crossover, but TP price is above recent high")
@@ -464,7 +464,7 @@ def should_enter(df: pd.DataFrame) -> str:
                 return None
             if not ( (fast.iloc[-4]-20) >= slow.iloc[-4] or (fast.iloc[-3]-20) >= slow.iloc[-3] or (fast.iloc[-2]-20) >= slow.iloc[-2] or (fast.iloc[-1]+20)  < slow.iloc[-1]):
                 return None
-            target_price = close.iloc[-1] * (1 - TP_PCT) - 10
+            target_price = close.iloc[-1] * (1 - TP_PCT) + 50
             previous_low = min(low_history[-15:-1])
             if target_price < previous_low:
                 send_telegram("Good EMA crossover, but TP price is below recent low")
