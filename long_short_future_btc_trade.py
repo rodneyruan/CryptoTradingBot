@@ -693,7 +693,7 @@ def start_bot():
     stream_name = f"{SYMBOL.lower()}@kline_{TIMEFRAME}"
     twm.start_futures_multiplex_socket(callback=kline_handler, streams=[stream_name])
 
-    send_telegram(f"Futures Bot STARTED\n{STRATEGY} {SYMBOL} {TIMEFRAME}\nSize: {QUANTITY_BTC} BTC")
+    send_telegram(f"Futures Bot STARTED\n{STRATEGY} {TRADE_DIRECTION} {SYMBOL} {TIMEFRAME}\nSize: {QUANTITY_BTC} BTC")
 
     try:
         while True:
