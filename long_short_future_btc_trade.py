@@ -43,6 +43,7 @@ STRATEGY = sys.argv[1].upper() if len(sys.argv) > 1 else"RSI"
 QUANTITY_BTC = float(sys.argv[2]) if len(sys.argv) > 2 else 0.01
 TIMEFRAME =  sys.argv[3] if len(sys.argv) > 3 else"3m"
 TRADE_DIRECTION = sys.argv[4].upper() if len(sys.argv) > 4 else "LONG"
+EMA_CHECK = sys.argv[5].upper() if len(sys.argv) > 5 else "EMA50"
 
 # Indicator parameters
 EMA_FAST = 9
@@ -370,13 +371,16 @@ def should_enter(df: pd.DataFrame) -> str:
 
     close = df["close"]
 
+    if STRATEGY == "RSI":
+        EMA_CHECK = "None"
     # === GLOBAL FILTERS (mirrored by direction) ===
     if TRADE_DIRECTION == "LONG":
         if "rsi14" in df.columns and df["rsi14"].iloc[-1] > 70:
             return None
         '''if close.iloc[-1] <= df["ema50"].iloc[-1] or df["ema50"].iloc[-1] <= df["ema200"].iloc[-1]:
             return None'''
-        if close.iloc[-1] <= df["ema50"].iloc[-1]:
+
+        if EMA_CHECK == "EMA50" and close.iloc[-1] <= df["ema50"].iloc[-1]:
             return None
         #if not is_htf_bullish("15m"):
         #    return None
@@ -385,7 +389,7 @@ def should_enter(df: pd.DataFrame) -> str:
             return None
         '''if close.iloc[-1] >= df["ema50"].iloc[-1] or df["ema50"].iloc[-1] >= df["ema200"].iloc[-1]:
             return None'''
-        if close.iloc[-1] >= df["ema50"].iloc[-1]:
+        if EMA_CHECK == "EMA50" and close.iloc[-1] >= df["ema50"].iloc[-1]:
             return None
         #if not is_htf_bearish("15m"):
         #    return None
@@ -412,12 +416,13 @@ def should_enter(df: pd.DataFrame) -> str:
                 return None
             #if macd.iloc[-1] >= 0:  # optional extra filter
             #    return None
-            if not( (macd.iloc[-1] - signal.iloc[-1] > 4.0) or  (signal.iloc[-2] - macd.iloc[-2] > 4.0)):
+            if not( (macd.iloc[-1] - signal.iloc[-1] > 4.0) or  (signal.iloc[-2] - macd.iloc[-2] > 4.0)
+                   or  (signal.iloc[-3] - macd.iloc[-3] > 4.0) or  (signal.iloc[-4] - macd.iloc[-4] > 4.0)):
                 send_telegram("MACD crossover detected, but histogram difference too small")
                 return None
             macd_was_below_for_several_bars = 0
             target_price = close.iloc[-1] * (1+ TP_PCT) - 100
-            previous_high = max(high_history[-17:-1])
+            previous_high = max(high_history[-21:-1])
             if target_price > previous_high:
                 send_telegram(f"Good MACD crossover, current price {close.iloc[-1]},but TP price {target_price} is above recent high {previous_high}")
                 return None
@@ -431,14 +436,15 @@ def should_enter(df: pd.DataFrame) -> str:
         else:
             if not (macd.iloc[-2] >= signal.iloc[-2] and macd.iloc[-1] < signal.iloc[-1]):
                 return None
-            if not ( (signal.iloc[-1] - macd.iloc[-1] > 4.0) or (macd.iloc[-2] - signal.iloc[-2] > 4.0)):
+            if not ( (signal.iloc[-1] - macd.iloc[-1] > 4.0) or (macd.iloc[-2] - signal.iloc[-2] > 4.0)
+                    or (macd.iloc[-3] - signal.iloc[-3] > 4.0) or (macd.iloc[-4] - signal.iloc[-4] > 4.0)):
                 send_telegram("MACD crossover detected, but histogram difference too small")
                 return None
             #if macd.iloc[-1] <= 0:
             #    return None
             macd_was_above_for_several_bars = 0
             target_price = close.iloc[-1] * (1 - TP_PCT) + 100
-            previous_low = min(low_history[-17:-1])
+            previous_low = min(low_history[-21:-1])
             if target_price < previous_low:
                 send_telegram(f"Good MACD crossover, but TP price {target_price} is below recent low {previous_low}")
                 return None
@@ -456,11 +462,11 @@ def should_enter(df: pd.DataFrame) -> str:
         if TRADE_DIRECTION == "LONG":
             if not (fast.iloc[-4] <= slow.iloc[-4] and fast.iloc[-3] <= slow.iloc[-3] and fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1]):
                 return None
-            if not ((slow.iloc[-4] - fast.iloc[-4] >=20) or (slow.iloc[-3] - fast.iloc[-3] >=20) or (slow.iloc[-2] - fast.iloc[-2] >=20) or (fast.iloc[-1] -slow.iloc[-1] >= 20) ):
+            if not ((slow.iloc[-5] - fast.iloc[-5] >=10) or (slow.iloc[-4] - fast.iloc[-4] >=10) or (slow.iloc[-3] - fast.iloc[-3] >=10) or (slow.iloc[-2] - fast.iloc[-2] >=10) or (fast.iloc[-1] -slow.iloc[-1] >= 7) ):
                 send_telegram("EMA crossover detected, but difference too small")
                 return None
             target_price = close.iloc[-1] * (1+ TP_PCT) -100
-            previous_high = max(high_history[-17:-1])
+            previous_high = max(high_history[-21:-1])
             if target_price > previous_high:
                 send_telegram(f"Good EMA crossover, but TP price {target_price} is above recent high {previous_high}")
                 return None
@@ -470,10 +476,10 @@ def should_enter(df: pd.DataFrame) -> str:
         else:
             if not (fast.iloc[-4] >= slow.iloc[-4] and fast.iloc[-3] >= slow.iloc[-3] and fast.iloc[-2] >= slow.iloc[-2] and fast.iloc[-1] < slow.iloc[-1]):
                 return None
-            if not ( (fast.iloc[-4]-20) >= slow.iloc[-4] or (fast.iloc[-3]-20) >= slow.iloc[-3] or (fast.iloc[-2]-20) >= slow.iloc[-2] or (fast.iloc[-1]+20)  < slow.iloc[-1]):
+            if not ( (fast.iloc[-5]-10) >= slow.iloc[-5] or (fast.iloc[-4]-10) >= slow.iloc[-4] or (fast.iloc[-3]-10) >= slow.iloc[-3] or (fast.iloc[-2]-10) >= slow.iloc[-2] or (fast.iloc[-1]+7)  < slow.iloc[-1]):
                 return None
             target_price = close.iloc[-1] * (1 - TP_PCT) + 100
-            previous_low = min(low_history[-17:-1])
+            previous_low = min(low_history[-21:-1])
             if target_price < previous_low:
                 send_telegram(f"Good EMA crossover, but TP price {target_price} is below recent low {previous_low}")
                 return None
