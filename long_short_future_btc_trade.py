@@ -364,7 +364,7 @@ def is_htf_bearish(timeframe: str = "1h") -> bool:
 # UNIVERSAL ENTRY CONDITION (LONG + SHORT)
 # =============================
 def should_enter(df: pd.DataFrame) -> str:
-    global STRATEGY, TRADE_DIRECTION, high_history, low_history
+    global STRATEGY, TRADE_DIRECTION, high_history, low_history,EMA_CHECK
     """Return 'LONG', 'SHORT', or None"""
     if len(df) < 200:
         return None
