@@ -278,7 +278,7 @@ def user_data_handler(msg):
                     position_open = False
 
                     print(f"[{now_str()}] [USER EVENT] TP FILLED @ {filled_price}")
-                    send_telegram(f"[{STRATEGY}] ====> Taking profit @ {filled_price:.2f} → Profit: {profit:+.2f} successful trades: {successful_trades},stop-loss-trades:{stop_lossed_trades}, Total P/L: {total_profit_usdc:+.2f} USDC")
+                    send_telegram(f"[{STRATEGY}] {TRADE_DIRECTION} {EMA_CHECK}  ====> Taking profit filled @ {filled_price:.2f} → Profit: {profit:+.2f} successful trades: {successful_trades},stop-loss-trades:{stop_lossed_trades}, Total P/L: {total_profit_usdc:+.2f} USDC")
                     log_trade("TP_FILLED", order_id, entry=entry_price, exit_p=filled_price,
                             profit=profit, notes="Take profit")
                     last_trade = {"type": "TP", "entry": entry_price, "exit": filled_price, "profit": profit}
@@ -316,7 +316,7 @@ def user_data_handler(msg):
 
                     total_profit_usdc += profit
                     print(f"[{now_str()}] [USER EVENT] SL LIMIT FILLED @ {filled_price}")
-                    send_telegram(f"[{STRATEGY}] ====> SL Limit Filled @ {filled_price:.2f} → P/L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, successful trades: {successful_trades},stop-loss-trades:{stop_lossed_trades} ")
+                    send_telegram(f"[{STRATEGY} {TRADE_DIRECTION} {EMA_CHECK}] ====> SL Limit Filled @ {filled_price:.2f} → P/L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, successful trades: {successful_trades},stop-loss-trades:{stop_lossed_trades} ")
                     log_trade("SL_LIMIT_FILLED", order_id, entry=entry_price, exit_p=filled_price, profit=profit)
                     last_trade = {"type": "SL_LIMIT", "profit": profit}
                     cleanup_sl_state()
@@ -646,10 +646,10 @@ def kline_handler(msg):
                     profit = (exit_price - entry_price) * QUANTITY_BTC
                 else:  # SHORT
                     profit = (entry_price - exit_price) * QUANTITY_BTC
-                global total_profit_usdc
+                global total_profit_usdc, EMA_CHECK
                 total_profit_usdc += profit
 
-                send_telegram(f"{STRATEGY} MARKET STOP-LOSS @ {exit_price}\nP&L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, Stop-loss trades: {stop_lossed_trades}, total trades: {successful_trades + stop_lossed_trades}  ")
+                send_telegram(f"{STRATEGY} {TRADE_DIRECTION} {EMA_CHECK}   MARKET STOP-LOSS @ {exit_price}\nP&L: {profit:+.2f} USDC, Total P/L: {total_profit_usdc:+.2f} USDC, Stop-loss trades: {stop_lossed_trades}, total trades: {successful_trades + stop_lossed_trades}  ")
                 log_trade("SL_MARKET", profit=profit, exit_p=exit_price)
                 cleanup_sl_state()
 
