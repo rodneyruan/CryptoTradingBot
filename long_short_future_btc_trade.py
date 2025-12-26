@@ -61,10 +61,10 @@ MACD_SLOW = 21
 MACD_SIGNAL = 5
 
 TP_PCT   = 0.002    # 0.2%
-SL_PCT   = 0.005    # 0.5%
+SL_PCT   = 0.008    # 0.8%
 if STRATEGY == "MACD":
-    TP_PCT   = 0.0023
-    SL_PCT   = 0.005
+    TP_PCT   = 0.0021
+    SL_PCT   = 0.008
 '''
 elif STRATEGY == "RSI":
     TP_PCT   = 0.0045
