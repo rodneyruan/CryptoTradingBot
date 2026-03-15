@@ -62,10 +62,10 @@ MACD_SIGNAL = 5
 
 # 0.2% and 0.8% works for EMA EMA-None. Not for MACD
 TP_PCT   = 0.003   # 0.2%
-SL_PCT   = 0.006    # 0.8%
+SL_PCT   = 0.007    # 0.8%
 if STRATEGY == "MACD":
-    TP_PCT   = 0.0025
-    SL_PCT   = 0.005
+    TP_PCT   = 0.003
+    SL_PCT   = 0.006
 '''
 elif STRATEGY == "RSI":
     TP_PCT   = 0.0045
@@ -431,8 +431,8 @@ def should_enter(df: pd.DataFrame) -> str:
                 if macd.iloc[-i] < signal.iloc[-i]:
                     macd_was_below_for_several_bars += 1
             if  macd_was_below_for_several_bars <= 7:
-                send_telegram("Good MACD crossover, but MACD was not below signal for 7 bars out of 15")
-                return None
+                send_telegram("Good MACD crossover, but MACD was not below signal for 7 bars out of 15, still buy anyway")
+                #return None
             return "LONG"
         else:
             if not (macd.iloc[-2] >= signal.iloc[-2] and macd.iloc[-1] < signal.iloc[-1]):
@@ -464,8 +464,8 @@ def should_enter(df: pd.DataFrame) -> str:
             if not (fast.iloc[-4] <= slow.iloc[-4] and fast.iloc[-3] <= slow.iloc[-3] and fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1]):
                 return None
             if not ((slow.iloc[-5] - fast.iloc[-5] >=10) or (slow.iloc[-4] - fast.iloc[-4] >=10) or (slow.iloc[-3] - fast.iloc[-3] >=10) or (slow.iloc[-2] - fast.iloc[-2] >=10) or (fast.iloc[-1] -slow.iloc[-1] >= 7) ):
-                send_telegram("EMA crossover detected, but difference too small")
-                return None
+                send_telegram("EMA crossover detected, but difference too small. still  buy anyway")
+                #return None
             target_price = close.iloc[-1] * (1+ TP_PCT) -100
             previous_high = max(high_history[-25:-1])
             if target_price > previous_high:
@@ -681,7 +681,7 @@ def keep_alive_listen_key():
             current_listen_key = client.futures_stream_get_listen_key()
             print(f"[{now_str()}] Fresh listenKey fetched: {current_listen_key[-20:]}...")
         
-        time.sleep(1800)  # 30 minutes
+        time.sleep(600)  # 30 minutes
         try:
             client.futures_stream_keepalive(listenKey=current_listen_key)
             print(f"[{now_str()}] User stream listenKey renewed")
