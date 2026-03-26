@@ -61,11 +61,11 @@ MACD_SLOW = 21
 MACD_SIGNAL = 5
 
 # 0.2% and 0.8% works for EMA EMA-None. Not for MACD
-TP_PCT   = 0.003   # 0.2%
-SL_PCT   = 0.007    # 0.8%
+TP_PCT   = 0.004   # 0.2%
+SL_PCT   = 0.02    # 0.8%
 if STRATEGY == "MACD":
-    TP_PCT   = 0.003
-    SL_PCT   = 0.006
+    TP_PCT   = 0.004
+    SL_PCT   = 0.03
 '''
 elif STRATEGY == "RSI":
     TP_PCT   = 0.0045
